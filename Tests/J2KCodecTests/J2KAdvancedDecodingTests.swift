@@ -610,15 +610,20 @@ final class J2KAdvancedDecodingTests: XCTestCase {
 
     // MARK: - Decoder Extension Placeholder Tests
 
-    func testDecodePartialThrowsNotImplemented() {
+    func testDecodePartialWithEmptyDataThrowsDecodeError() async {
+        // v10.8.0: decodePartial now WORKS (umbrella API composing
+        // resolution + region + component selection). Empty data should
+        // still throw a decode error from the underlying parse, just
+        // not `notImplemented`.
         let decoder = J2KDecoder()
         let data = Data()
         let options = J2KPartialDecodingOptions()
-
-        XCTAssertThrowsError(try decoder.decodePartial(data, options: options)) { error in
-            guard case J2KError.notImplemented = error else {
-                XCTFail("Expected notImplemented error")
-                return
+        do {
+            _ = try await decoder.decodePartial(data, options: options)
+            XCTFail("Expected a decode error on empty data")
+        } catch {
+            if case J2KError.notImplemented = error {
+                XCTFail("decodePartial must no longer throw notImplemented (v10.8.0)")
             }
         }
     }

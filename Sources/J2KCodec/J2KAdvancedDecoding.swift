@@ -459,25 +459,104 @@ public final class J2KIncrementalDecoder: Sendable {
 // MARK: - Decoder Extensions
 
 extension J2KDecoder {
-    /// Decodes a JPEG 2000 image with partial decoding options.
+    /// Decodes a JPEG 2000 image with combined partial-decoding options.
     ///
-    /// Allows selective decoding of quality layers, resolution levels,
-    /// regions, and components.
+    /// **v10.8.0** — `decodePartial` is the umbrella API composing the
+    /// partial-decode capabilities shipped across v10.5.0–v10.7.0:
+    ///
+    /// - `maxResolutionLevel` — decode at a reduced resolution level
+    ///   (v10.5.0 true partial-resolution decode: code-block filter +
+    ///   inverse-DWT truncation; 3-8× faster than full decode).
+    /// - `region` — decode a spatial region of interest (v10.6.0
+    ///   entropy-skip + v10.7.0 tile-skip). The region is interpreted
+    ///   in full-image pixel coordinates.
+    /// - `components` — return only the requested image components,
+    ///   in the requested order.
+    ///
+    /// When both `maxResolutionLevel` and `region` are set, the image
+    /// is decoded at the resolution level and the region (full-image
+    /// coordinates) is mapped onto the reduced-resolution grid.
+    ///
+    /// `maxLayer` (quality-layer truncation) is **not** supported — the
+    /// decoder's packet loop is single-layer. A `maxLayer` that keeps
+    /// every layer is a harmless no-op; one that would exclude layers
+    /// throws ``J2KError/notImplemented(_:)``. `earlyStop` is advisory
+    /// — partial decode inherently skips work — and currently has no
+    /// effect on the result.
     ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
-    ///   - options: Partial decoding options.
-    /// - Returns: The decoded image (potentially partial).
-    /// - Throws: ``J2KError`` if decoding fails.
-    public func decodePartial(_ data: Data, options: J2KPartialDecodingOptions) throws -> J2KImage {
-        // Placeholder implementation
-        // In reality, this would:
-        // 1. Parse the codestream header
-        // 2. Identify required code-blocks based on options
-        // 3. Decode only the necessary data
-        // 4. Reconstruct the image at the requested quality/resolution
+    ///   - options: Combined partial-decoding options.
+    /// - Returns: The decoded image at the requested resolution / region / components.
+    /// - Throws: ``J2KError`` if decoding fails or an unsupported option is requested.
+    public func decodePartial(_ data: Data, options: J2KPartialDecodingOptions) async throws -> J2KImage {
+        let metadata = try DecoderPipeline.peekMetadata(data)
+        let levels = metadata.configuration.decompositionLevels
+        let layers = max(metadata.configuration.qualityLayers, 1)
+        let componentCount = metadata.componentCount
 
-        throw J2KError.notImplemented("Partial decoding not yet fully implemented")
+        try options.validate(
+            imageWidth: metadata.width, imageHeight: metadata.height,
+            maxLayers: layers, maxLevels: levels, componentCount: componentCount)
+
+        // Quality-layer truncation is not supported — the decoder's
+        // packet loop is single-layer. A maxLayer that keeps every
+        // layer (== layers - 1) is a harmless no-op; anything lower
+        // would require multi-layer packet decode.
+        if let layer = options.maxLayer, layer < layers - 1 {
+            throw J2KError.notImplemented(
+                "decodePartial: quality-layer truncation (maxLayer) — the decoder is single-layer")
+        }
+
+        // --- Resolution-aware decode ---
+        var image: J2KImage
+        var resolutionFactor = 1
+        if let level = options.maxResolutionLevel, level >= 0, level < levels {
+            // v10.5.0 true partial-resolution decode.
+            image = try await decodePartialResolution(data: data, level: level)
+            resolutionFactor = 1 << (levels - level)
+        } else if let region = options.region {
+            // v10.6.0/v10.7.0 ROI decode — entropy-skip + tile-skip.
+            // Returns a full-dimension image; cropped below.
+            image = try await decodeRegionDirect(data: data, region: region)
+        } else {
+            image = try await decode(data)
+        }
+
+        // --- Region crop ---
+        if let region = options.region {
+            let crop: J2KRegion
+            if resolutionFactor == 1 {
+                crop = region
+            } else {
+                // The region is full-image coordinates; map it onto the
+                // reduced-resolution grid produced by the partial-
+                // resolution decode.
+                let f = resolutionFactor
+                let rx = min(region.x / f, max(0, image.width - 1))
+                let ry = min(region.y / f, max(0, image.height - 1))
+                let rw = max(1, min((region.width + f - 1) / f, image.width - rx))
+                let rh = max(1, min((region.height + f - 1) / f, image.height - ry))
+                crop = J2KRegion(x: rx, y: ry, width: rw, height: rh)
+            }
+            image = try extractRegion(from: image, region: crop)
+        }
+
+        // --- Component selection ---
+        if let comps = options.components {
+            let selected = comps.compactMap { idx in
+                image.components.first(where: { $0.index == idx })
+            }
+            guard selected.count == comps.count else {
+                throw J2KError.invalidParameter(
+                    "decodePartial: requested components \(comps) not all present in the decoded image")
+            }
+            image = J2KImage(
+                width: image.width, height: image.height,
+                components: selected, colorSpace: image.colorSpace)
+        }
+
+        return image
     }
 
     /// Decodes a specific region of interest from a JPEG 2000 image.
