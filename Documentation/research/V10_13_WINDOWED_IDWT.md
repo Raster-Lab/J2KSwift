@@ -71,11 +71,39 @@ Isolation performed:
   full `inverseTransformMultiLevel53` is `async`, changing the
   suspension structure at that call site).
 
-Root-causing a heap-corruption bug of this kind needs **AddressSanitizer**.
-ASan does not load in this environment — the runtime rejects the
-sanitizer dylib under the platform code-signing policy
-(`Sanitizer load violates platform policy`). Without ASan, further
-diagnosis is disproportionately expensive.
+## The crash is `swift test`-harness-specific (key finding)
+
+A second debugging pass narrowed it sharply. The **same test bundle**,
+**same single test**, **same code**:
+
+- `swift test --filter testROIDirect_bitExact_DX_2800` — **3/3 crash**
+  (SIGABRT, heap corruption).
+- `xcrun xctest -XCTest …/testROIDirect_bitExact_DX_2800 <bundle>` —
+  **4/4 PASS**, fully executed, all 7 regions `.direct ≡
+  .fullImageExtraction ≡ crop` bit-exact.
+
+So the windowed iDWT **produces correct output** — proven by the
+V10_13 unit tests *and* four clean bit-exact end-to-end runs under the
+standard `xctest` runner. The crash is a deterministic interaction
+with the **`swift test` harness specifically** (which co-loads
+swift-testing 1501 alongside XCTest), not a defect in the windowed
+decode itself.
+
+Attempts that did **not** resolve it:
+- AddressSanitizer — does not load (`Sanitizer load violates platform
+  policy`).
+- Guard Malloc (`libgmalloc` via `DYLD_INSERT_LIBRARIES`) — the env
+  var does not survive `swift test`'s process chain (the crash stayed
+  in the system `szone` allocator); injected directly into `xcrun
+  xctest`, the test simply passes (no crash to catch there).
+- Rewriting the windowed routine as `async` + `withTaskGroup`-parallel
+  (structurally mirroring `inverseTransformMultiLevel53`) — the
+  `swift test` crash persisted, changing only SIGABRT → SIGSEGV. So
+  the sync/async call-site shape is not the cause.
+
+This blocks shipping regardless of the windowed code being correct:
+the project's **mandatory commit gate runs via `swift test`**, and a
+crashing `swift test` cannot produce the required clean gate run.
 
 ## Outcome
 
@@ -92,12 +120,19 @@ unresolved.
 
 ## Next steps
 
-- Re-attempt the integration in an environment where AddressSanitizer
-  loads — ASan will pinpoint the offending access in one run.
-- Alternatively, rule out the sync/async hypothesis by giving the
-  windowed routine an `async` signature that mirrors
-  `inverseTransformMultiLevel53`'s task-group structure, so the call
-  site's suspension behaviour is unchanged.
+- Reproduce under `swift test` on a host where AddressSanitizer loads
+  (e.g. Linux, or a Mac without the sanitizer code-signing
+  restriction) — ASan pinpoints the access in one run. The bug only
+  manifests under `swift test`, so the repro must use that harness.
+- Investigate the `swift test` harness path itself: it co-loads
+  swift-testing 1501 + XCTest in one process and runs the bundle via
+  `swiftpm-xctest-helper`. Bisecting what that adds vs. plain `xctest`
+  (executor configuration, observation hooks, parallel scheduling)
+  would localise the interaction.
+- The sync/async hypothesis is **ruled out** — the async + parallel
+  rewrite did not fix it.
 - The `decodeRegion(.direct)` API and the v10.6/v10.7 staging are
-  unaffected — Stage 3 slots in behind the same public surface when
-  the integration is resolved.
+  unaffected — Stage 3 slots in behind the same public surface once
+  the harness interaction is understood. The windowed transform itself
+  needs no further correctness work (bit-exact, four clean `xctest`
+  end-to-end runs).
