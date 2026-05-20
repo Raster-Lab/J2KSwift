@@ -1235,6 +1235,22 @@ public struct J2KDecoder: Sendable {
         return try await pipeline.decode(data)
     }
 
+    /// v10.6.0 ROI decode — internal entry point for true region-of-
+    /// interest decode. Sets `pipeline.regionOfInterest` so that
+    /// `extractTileData` skips entropy decode for every code-block
+    /// whose inverse-DWT spatial footprint does not overlap the
+    /// region. The inverse DWT still runs full-tile, so the returned
+    /// image carries the full codestream dimensions — the caller
+    /// (`decodeRegion`) crops it to the region. Because every block
+    /// influencing an in-region pixel is retained, the cropped result
+    /// is bit-identical to a full `decode()` followed by the same crop.
+    func decodeRegionDirect(data: Data, region: J2KRegion) async throws -> J2KImage {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
+        pipeline.regionOfInterest = region
+        return try await pipeline.decode(data)
+    }
+
     /// Decodes JPEG 2000 data into an image with progress reporting.
     ///
     /// - Parameters:
