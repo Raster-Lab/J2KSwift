@@ -247,10 +247,24 @@ struct DecoderPipeline: Sendable {
     ///
     /// Set by `J2KDecoder.decodeResolution(_:options:)` via the
     /// public API. Stage B.1 saves the dominant entropy decode stage
-    /// for skipped blocks; Stage B.2 (future) will also truncate
-    /// the inverse DWT. Phase 1 (v10.4.0) decode-then-downsample
-    /// is the fallback path when this is `nil`.
+    /// for skipped blocks; Stage B.2 also truncates the inverse DWT
+    /// and outputs reduced-dimension data directly (no separate
+    /// downsample step).
     var partialResolutionLevel: Int? = nil
+
+    /// v10.5.0 Stage B.2 — reduced output dimensions for partial
+    /// resolution decode. Set in tandem with `partialResolutionLevel`
+    /// before the decode runs:
+    ///   width  = ⌈metadata.width  / 2^(N-r)⌉
+    ///   height = ⌈metadata.height / 2^(N-r)⌉
+    /// The downstream stages (color transform, DC unshift,
+    /// reconstructImage) substitute this for
+    /// `metadata.width × metadata.height` to allocate / iterate
+    /// reduced buffers.
+    ///
+    /// When nil, downstream stages use the full metadata dimensions
+    /// (preserves v10.4.0 and earlier behaviour).
+    var outputDimensions: (width: Int, height: Int)? = nil
 
     // MARK: - v6.2.0 — GPU inverse 5/3 INT DWT routing gate
     //
@@ -458,6 +472,11 @@ struct DecoderPipeline: Sendable {
         let (metadata, tiles) = try parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
 
+        // v10.5.0 Stage B.2 — `outputDimensions` is computed by the
+        // caller (`J2KDecoder.decodePartialResolution`) and set on the
+        // pipeline before this call when partial-resolution decode is
+        // active; `decode` reads it but does not mutate `self`.
+
         // v6.2.0 — gated routing to the GPU decode paths.
         //
         // D1 (#314) added `_gpuInverse53Enabled` for routing to the
@@ -481,7 +500,18 @@ struct DecoderPipeline: Sendable {
         // time Metal is touched per process) is avoided entirely when
         // the image is too small to benefit from GPU. Saves ~50 ms on
         // every CLI invocation that decodes an image below the threshold.
-        if Self._gpuInverse53Enabled
+        // v10.5.0 Stage B.2 — when partial-resolution decode is active,
+        // force the CPU iDWT path. The GPU iDWT
+        // (`applyInverseWaveletTransformGPU`) doesn't yet honour the
+        // truncation; routing partial-decode through GPU would
+        // produce full-dimension data with a reduced-dimension image
+        // header (consumers misinterpret rows/cols). CPU truncation
+        // gets reduced data + reduced dims consistently. A future
+        // optimisation would add the truncation to the GPU iDWT.
+        let allowGPUPath = partialResolutionLevel == nil
+
+        if allowGPUPath
+            && Self._gpuInverse53Enabled
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
             && J2KMetalDWT.isAvailable
         {
@@ -1469,6 +1499,16 @@ struct DecoderPipeline: Sendable {
     /// Internal (was private through v7.0.0); promoted to allow
     /// v7.1.0 H1.0 Defect A diagnostic test to extract per-tile
     /// codeblock data. Not part of the public API surface.
+    /// v10.5.0 Stage B.2 — peek metadata without committing to a
+    /// full decode. Used by `J2KDecoder.decodePartialResolution` to
+    /// compute the reduced output dimensions from the codestream's
+    /// SIZ + COD markers before the decode runs.
+    static func peekMetadata(_ data: Data) throws -> CodestreamMetadata {
+        let pipeline = DecoderPipeline()
+        let (metadata, _) = try pipeline.parseCodestream(data)
+        return metadata
+    }
+
     func parseCodestream(_ data: Data) throws -> (CodestreamMetadata, [(tileIndex: Int, tileData: Data)]) {
         var reader = J2KBitReader(data: data)
 
@@ -3405,6 +3445,21 @@ struct DecoderPipeline: Sendable {
         let filter = metadata.configuration.waveletFilter
         let levels = metadata.configuration.decompositionLevels
 
+        // v10.5.0 Stage B.2 — partial-resolution iDWT truncation.
+        // When `partialResolutionLevel = r` is set (in [0, levels]),
+        // only the deepest `r` iDWT steps run. The `levelSubbands53`
+        // array (built later, deepest-first) is truncated to the
+        // first `r` elements before being passed to the iDWT, so
+        // the inverse transform stops after producing the LL at
+        // decomposition level (N - r). For r = 0, no iDWT runs;
+        // the function returns the deepest LL directly.
+        let effectiveLevels: Int = {
+            if let r = partialResolutionLevel {
+                return min(max(r, 0), levels)
+            }
+            return levels
+        }()
+
         // Use the component count from the SIZ marker, not from the data.
         // Some components may have all-empty packets (e.g., aggressive rate
         // control). They should still produce zero-filled output.
@@ -3908,9 +3963,22 @@ struct DecoderPipeline: Sendable {
                     // self-decode correctly. For origin (0, 0) the
                     // overload routes to the existing optimised
                     // flat-buffer fast path — byte-identical, zero-cost.
+                    //
+                    // v10.5.0 Stage B.2 — when partial-resolution decode
+                    // is active, truncate the subbands array to the
+                    // deepest `effectiveLevels` entries. The iDWT does
+                    // exactly N steps for N subband elements; passing
+                    // fewer elements stops the inverse transform at the
+                    // corresponding decomposition level, producing
+                    // reduced-dimension LL output directly. For
+                    // effectiveLevels == 0, the iDWT short-circuits and
+                    // returns the deepest LL unchanged.
+                    let truncatedSubbands = (effectiveLevels < levelSubbands53.count)
+                        ? Array(levelSubbands53.prefix(effectiveLevels))
+                        : levelSubbands53
                     let result = try await optimizer.inverseTransformMultiLevel53(
                         ll: llFlat, llW: expectedLLW, llH: expectedLLH,
-                        subbands: levelSubbands53,
+                        subbands: truncatedSubbands,
                         tileOriginX: tcx0, tileOriginY: tcy0
                     )
                     // Convert flat [Int32] → [Double] with vDSP (NEON-vectorised on Apple Silicon)
@@ -4650,6 +4718,14 @@ struct DecoderPipeline: Sendable {
     ) throws -> J2KImage {
         var imageComponents: [J2KComponent] = []
 
+        // v10.5.0 Stage B.2 — substitute outputDimensions for
+        // metadata.width × height when partial-resolution decode is
+        // active. The truncated iDWT has already produced reduced-
+        // dimension component data; the J2KImage and its components
+        // must carry the reduced dimensions to stay consistent.
+        let effectiveWidth = outputDimensions?.width ?? metadata.width
+        let effectiveHeight = outputDimensions?.height ?? metadata.height
+
         func clampRoundedToInt32(_ value: Double) -> Int32 {
             let rounded = value.rounded()
             if rounded.isNaN { return 0 }
@@ -4669,8 +4745,8 @@ struct DecoderPipeline: Sendable {
             guard idx < metadata.components.count else { break }
 
             let compInfo = metadata.components[idx]
-            let width = metadata.width / compInfo.subsamplingX
-            let height = metadata.height / compInfo.subsamplingY
+            let width = effectiveWidth / compInfo.subsamplingX
+            let height = effectiveHeight / compInfo.subsamplingY
             let componentLowerBound: Int32
             let componentUpperBound: Int32
             if compInfo.signed {
@@ -4815,8 +4891,8 @@ struct DecoderPipeline: Sendable {
         }
 
         return J2KImage(
-            width: metadata.width,
-            height: metadata.height,
+            width: effectiveWidth,
+            height: effectiveHeight,
             components: imageComponents
         )
     }
