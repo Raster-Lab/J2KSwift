@@ -478,6 +478,38 @@ struct DecoderPipeline: Sendable {
         return false
     }
 
+    /// v10.16-research — Lever 1 for issue #440. Routes the
+    /// CPU-HT-entropy GPU decode path (`decodeGPU` and the production
+    /// `decode()` GPU IDWT) through `inverse2DInt32MultiLevelFused`
+    /// instead of the per-level `inverse2DInt32` dispatch.
+    ///
+    /// The per-level path commits one Metal command buffer per
+    /// decomposition level and reads the Int32 result back to a CPU
+    /// array between levels (`inverse2DInt32` returns `[Int32]`); a
+    /// 5-level decode pays 5 commit/await round-trips + 4 inter-level
+    /// GPU→CPU→GPU transfers. `inverse2DInt32MultiLevelFused` chains
+    /// every level inside ONE command buffer — the output of level k
+    /// stays GPU-resident as the LL input of level k-1, one final
+    /// readback.
+    ///
+    /// That fused path already exists (added in the M4P GPU-HT arc,
+    /// commit e0be585) but its call site is gated to `useGPUHT`, so
+    /// `decodeGPU` / `decode()` never reach it. **Default OFF** for
+    /// the v10.16 A/B; flipped only if the 3 ms acceptance gate is
+    /// cleared with bit-exact parity.
+    nonisolated(unsafe) static var _gpuDecodeFusedIDWTEnabled: Bool = _readGPUDecodeFusedIDWTEnv()
+
+    private static func _readGPUDecodeFusedIDWTEnv() -> Bool {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_DECODE_FUSED_IDWT"] {
+            switch v.lowercased() {
+            case "1", "true", "yes": return true
+            case "0", "false", "no": return false
+            default: break
+            }
+        }
+        return false
+    }
+
     /// Decodes a JPEG 2000 codestream through the full pipeline.
     ///
     /// - Parameters:
@@ -4628,7 +4660,13 @@ struct DecoderPipeline: Sendable {
                         codeblockBuffer: batch.codeblockBuffer,
                         levelsPlan: plansForComp,
                         initialLL: nil)
-                } else if (useGPUHT || Self._gpuHTEntropyEnabled), metalSession != nil {
+                } else if (useGPUHT || Self._gpuHTEntropyEnabled
+                           || Self._gpuDecodeFusedIDWTEnabled), metalSession != nil {
+                    // v10.16-research Lever 1 (#440): `_gpuDecodeFusedIDWTEnabled`
+                    // adds the CPU-HT-entropy `decodeGPU` / `decode()` paths
+                    // here, so they take the single-command-buffer multi-level
+                    // fused IDWT instead of the per-level readback dispatch.
+                    //
                     // v7.1.0 H3: per-level OUTPUT canvas origin —
                     // determines parity for the inverse 5/3 lifting
                     // at each decomposition level. tcx0/tcy0 are the
