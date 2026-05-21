@@ -2,9 +2,12 @@
 // BenchModel.swift
 // J2KBenchApp — v10.5 cross-silicon bench
 //
-// Single source of truth for the corpus, per-fixture state, and host
-// identity. Designed to be lightweight enough to JSON-encode straight
-// to the share-sheet payload that compare_hosts.py consumes.
+// Value types for the corpus, per-fixture timings, persisted runs, and
+// host identity, plus `BenchModel` — the observable state of one *live*
+// run session (a fresh instance is created per New-Benchmark screen).
+//
+// Persistence and JSON export live in `BenchStore`; this file is just
+// the data model.
 
 import Foundation
 import J2KCore
@@ -14,7 +17,7 @@ import UIKit
 #endif
 
 /// One fixture in the canonical synthetic corpus.
-struct BenchFixture: Identifiable, Hashable {
+struct BenchFixture: Identifiable, Hashable, Sendable {
     let id: String
     let modality: String
     let width: Int
@@ -27,7 +30,7 @@ struct BenchFixture: Identifiable, Hashable {
 }
 
 /// Per-run timing samples (median computed lazily).
-struct TimingSamples: Codable, Hashable {
+struct TimingSamples: Codable, Hashable, Sendable {
     var samples: [Double] = []  // milliseconds
 
     var median: Double? {
@@ -37,10 +40,11 @@ struct TimingSamples: Codable, Hashable {
     }
     var min: Double? { samples.min() }
     var max: Double? { samples.max() }
+    var isEmpty: Bool { samples.isEmpty }
 }
 
 /// All measurements for one fixture.
-struct FixtureResult: Codable, Hashable {
+struct FixtureResult: Codable, Hashable, Sendable, Identifiable {
     var fixture: String
     var modality: String
     var width: Int
@@ -52,17 +56,83 @@ struct FixtureResult: Codable, Hashable {
     var decodeGPU: TimingSamples = TimingSamples()
     var decodeWithGPUHT: TimingSamples = TimingSamples()
     var error: String?
+
+    var id: String { fixture }
+    var label: String { "\(modality) \(width)\u{00d7}\(height)" }
+
+    /// Median of the three decode lanes that produced samples — the
+    /// headline "fastest decode" figure shown in compact rows.
+    var fastestDecodeMedian: Double? {
+        [decodeCPU.median, decodeGPU.median, decodeWithGPUHT.median]
+            .compactMap { $0 }
+            .min()
+    }
 }
 
-/// Coarse run-state for the UI.
-enum BenchPhase: Equatable {
+/// Coarse run-state for the UI. `encoding`/`decoding` carry the
+/// fixture **id** so a view can match a phase to a corpus row exactly.
+enum BenchPhase: Equatable, Sendable {
     case idle
     case warming(String)
-    case encoding(String)
-    case decoding(String, String)  // (fixture, mode)
+    case encoding(id: String)
+    case decoding(id: String, mode: String)
     case done
     case failed(String)
 }
+
+/// Per-fixture lifecycle state, derived for the UI badge.
+enum FixtureStatus: Sendable {
+    case notSelected   // excluded from this run
+    case notRun        // selected, not yet measured
+    case running       // currently encoding/decoding
+    case done          // all stages complete
+    case failed        // produced an error
+}
+
+// MARK: - Persisted run
+
+/// Host facts snapshotted at run time so a saved run keeps its identity
+/// even though `HostInfo` reads live `sysctl` values.
+struct HostSnapshot: Codable, Hashable, Sendable {
+    var brand: String
+    var modelIdentifier: String
+    var systemName: String
+    var systemVersion: String
+    var ncpu: Int
+
+    static func capture() -> HostSnapshot {
+        HostSnapshot(
+            brand: HostInfo.brand,
+            modelIdentifier: HostInfo.modelIdentifier,
+            systemName: HostInfo.systemName,
+            systemVersion: HostInfo.systemVersion,
+            ncpu: HostInfo.ncpu)
+    }
+}
+
+/// One completed (or partially completed) benchmark session, persisted
+/// to disk by `BenchStore` so the user never has to re-run to view it.
+struct BenchRun: Codable, Hashable, Sendable, Identifiable {
+    var id: UUID
+    var date: Date
+    var host: HostSnapshot
+    var j2kVersion: String
+    var runs: Int
+    var warmups: Int
+    var results: [FixtureResult]   // ordered by corpus appearance
+
+    /// Short human title for the history list.
+    var title: String {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        fmt.timeStyle = .short
+        return fmt.string(from: date)
+    }
+    var fixtureCount: Int { results.count }
+    var hasFailures: Bool { results.contains { $0.error != nil } }
+}
+
+// MARK: - Live run session
 
 @MainActor
 final class BenchModel: ObservableObject {
@@ -89,86 +159,56 @@ final class BenchModel: ObservableObject {
         .init(id: "mg_001_class",    modality: "MG", width: 3520, height: 4784, bitDepth: 12, seed: 6002),
     ]
 
+    static func fixture(id: String) -> BenchFixture? {
+        corpus.first { $0.id == id }
+    }
+
     @Published var phase: BenchPhase = .idle
     @Published var results: [String: FixtureResult] = [:]
     @Published var progressCompleted: Int = 0
     @Published var progressTotal: Int = 0
     @Published var lastError: String?
 
+    /// Fixture ids the user has ticked. Drives both *which fixtures run*
+    /// and *which fixtures export* — one selection, both actions.
+    @Published var selectedFixtures: Set<String> = Set(corpus.map(\.id))
+
     /// Configurable so the user can do a quick smoke run (e.g. 3 timed
     /// samples) before committing to the full 7-sample canonical run.
     @Published var runs: Int = 7
     @Published var warmups: Int = 2
 
-    /// JSON written to the share-sheet payload. Naming matches the
-    /// compare_hosts.py contract — see `hostJSONFilename`.
-    var hostJSONFilename: String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = TimeZone(identifier: "UTC") ?? .current
-        let c = cal.dateComponents([.year, .month, .day], from: Date())
-        let date = String(format: "%04d%02d%02d",
-                          c.year ?? 1970, c.month ?? 1, c.day ?? 1)
-        let model = sanitisedModel
-        let version = j2kVersionString
-        return "benchmark-results-\(model)-\(version)-warm-inproc-\(date).json"
+    /// `true` once `runAll`/`run(fixtures:)` has finished and a `BenchRun`
+    /// has been persisted — gates the "Share Selected" affordance.
+    @Published var completed: Bool = false
+
+    // MARK: Selection helpers
+
+    var allSelected: Bool {
+        selectedFixtures.count == BenchModel.corpus.count
+    }
+    func toggle(_ id: String) {
+        if selectedFixtures.contains(id) { selectedFixtures.remove(id) }
+        else { selectedFixtures.insert(id) }
+    }
+    func selectAll() { selectedFixtures = Set(BenchModel.corpus.map(\.id)) }
+    func selectNone() { selectedFixtures.removeAll() }
+
+    // MARK: Per-fixture status (drives the UI badge)
+
+    func status(for fixture: BenchFixture) -> FixtureStatus {
+        if let r = results[fixture.id], r.error != nil { return .failed }
+        switch phase {
+        case .encoding(let id) where id == fixture.id:        return .running
+        case .decoding(let id, _) where id == fixture.id:     return .running
+        default: break
+        }
+        if results[fixture.id] != nil { return .done }
+        return selectedFixtures.contains(fixture.id) ? .notRun : .notSelected
     }
 
-    /// Encode the run as the same shape Mac142/Mac1610 baseline JSONs
-    /// already use, so `compare_hosts.py` can ingest A-series hosts
-    /// alongside M2/M4.
-    func encodeAsJSON() -> Data? {
-        let payload: [String: Any] = [
-            "host": [
-                "machine": "arm64",
-                "system": HostInfo.systemName,
-                "release": HostInfo.systemVersion,
-                "brand": HostInfo.brand,
-                "ncpu": HostInfo.ncpu,
-                "model": HostInfo.modelIdentifier
-            ],
-            "j2k_version": "J2KSwift version \(j2kVersionString)",
-            "lane": "inproc",  // pure SDK warm in-process (no daemon, no CLI)
-            "runs": runs,
-            "warmups": warmups,
-            "results": results.mapValues { r in
-                return [
-                    "fixture": r.fixture,
-                    "modality": r.modality,
-                    "width": r.width,
-                    "height": r.height,
-                    "bitDepth": r.bitDepth,
-                    "codestreamBytes": r.codestreamBytes,
-                    "encode_ms":          timingDict(r.encode),
-                    "decode_cpu_ms":      timingDict(r.decodeCPU),
-                    "decode_gpu_ms":      timingDict(r.decodeGPU),
-                    "decode_gpuht_ms":    timingDict(r.decodeWithGPUHT),
-                    "error": r.error ?? NSNull()
-                ] as [String: Any]
-            }
-        ]
-        return try? JSONSerialization.data(
-            withJSONObject: payload,
-            options: [.prettyPrinted, .sortedKeys])
-    }
-
-    private func timingDict(_ t: TimingSamples) -> Any {
-        guard !t.samples.isEmpty else { return NSNull() }
-        return [
-            "samples": t.samples,
-            "median": t.median ?? 0,
-            "min": t.min ?? 0,
-            "max": t.max ?? 0
-        ] as [String: Any]
-    }
-
-    private var sanitisedModel: String {
-        HostInfo.modelIdentifier
-            .replacingOccurrences(of: ",", with: "")
-            .replacingOccurrences(of: " ", with: "")
-    }
-
-    /// Read directly from J2KCore so the JSON always matches the
-    /// dylib that produced it.
+    /// Read directly from J2KCore so any displayed version always
+    /// matches the dylib that produced it.
     var j2kVersionString: String { HostInfo.j2kSwiftVersion }
 }
 
@@ -206,8 +246,6 @@ enum HostInfo {
         #endif
     }
 
-    /// Pulled at runtime from J2KCore.getVersion(); guarded against a
-    /// hard dep so this file is self-contained for unit tests.
     /// Pulled at runtime from J2KCore's top-level `getVersion()`; matches
     /// the semver in the `benchmark-results-<host>-<version>-...` file
     /// label convention.
@@ -247,4 +285,3 @@ enum HostInfo {
         }
     }
 }
-

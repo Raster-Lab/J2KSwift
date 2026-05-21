@@ -5,7 +5,8 @@
 // Drives the in-process warm bench: deterministic LCG-seeded 16-bit
 // fixture synthesis, HT-J2K lossless encode (2 warmup + N timed,
 // median reported), then decode across .cpu / .decodeGPU /
-// .decodeWithGPUHT (same shape).
+// .decodeWithGPUHT (same shape). Runs only the fixtures the user
+// selected, then persists the result as a `BenchRun` via `BenchStore`.
 //
 // This is the same arithmetic the canonical
 // `cross_codec_warm_bench.py --in-proc` lane runs — minus the
@@ -22,19 +23,27 @@ import J2KMetal
 @MainActor
 final class BenchRunner {
     private weak var model: BenchModel?
+    private weak var store: BenchStore?
 
-    init(model: BenchModel) {
+    init(model: BenchModel, store: BenchStore?) {
         self.model = model
+        self.store = store
     }
 
-    /// Run the full bench. Updates `model.phase` + `model.results`
-    /// on the MainActor as each fixture completes.
-    func runAll() async {
-        guard let model else { return }
+    /// Run the bench over the selected fixture ids. Updates
+    /// `model.phase` + `model.results` on the MainActor as each fixture
+    /// completes, then builds + persists a `BenchRun` and returns it.
+    @discardableResult
+    func run(fixtures: Set<String>) async -> BenchRun? {
+        guard let model else { return nil }
+        let toRun = BenchModel.corpus.filter { fixtures.contains($0.id) }
+        guard !toRun.isEmpty else { return nil }
+
         model.results.removeAll()
+        model.completed = false
         model.progressCompleted = 0
         // 4 stages per fixture (encode + 3 decode modes).
-        model.progressTotal = BenchModel.corpus.count * 4
+        model.progressTotal = toRun.count * 4
         model.lastError = nil
 
         // Warm the process-shared Metal session once up front so the
@@ -44,7 +53,7 @@ final class BenchRunner {
         model.phase = .warming("Metal session")
         await J2KDecoder.preWarm(includeWarmupDispatch: true)
 
-        for fixture in BenchModel.corpus {
+        for fixture in toRun {
             do {
                 try await benchOne(fixture: fixture, runs: model.runs, warmups: model.warmups)
             } catch {
@@ -60,6 +69,20 @@ final class BenchRunner {
         }
 
         model.phase = .done
+        model.completed = true
+
+        // Persist — corpus order, only the fixtures actually measured.
+        let ordered = BenchModel.corpus.compactMap { model.results[$0.id] }
+        let run = BenchRun(
+            id: UUID(),
+            date: Date(),
+            host: .capture(),
+            j2kVersion: model.j2kVersionString,
+            runs: model.runs,
+            warmups: model.warmups,
+            results: ordered)
+        store?.add(run)
+        return run
     }
 
     // MARK: - Per-fixture pipeline
@@ -73,11 +96,11 @@ final class BenchRunner {
 
         // Synthesize once; warm bench reuses the same J2KImage buffer
         // for every run so allocator costs aren't bench-time-dominated.
-        let image = makeJ2KImage(for: fixture)
+        let image = J2KSampleSource.synthesize(fixture)
 
         // 1) Encode bench --------------------------------------------
-        model.phase = .encoding(fixture.label)
-        let encoder = makeLosslessHTEncoder()
+        model.phase = .encoding(id: fixture.id)
+        let encoder = J2KSampleSource.losslessHTEncoder()
         var encSamples: [Double] = []
         encSamples.reserveCapacity(runs)
         var lastCodestream: Data?
@@ -111,7 +134,7 @@ final class BenchRunner {
         result.decodeCPU = try await timedDecode(
             codestream: codestream,
             mode: .cpu,
-            fixtureLabel: fixture.label,
+            fixtureID: fixture.id,
             runs: runs, warmups: warmups,
             phaseModeLabel: ".cpu")
         model.results[fixture.id] = result
@@ -120,7 +143,7 @@ final class BenchRunner {
         result.decodeGPU = try await timedDecode(
             codestream: codestream,
             mode: .decodeGPU,
-            fixtureLabel: fixture.label,
+            fixtureID: fixture.id,
             runs: runs, warmups: warmups,
             phaseModeLabel: ".decodeGPU")
         model.results[fixture.id] = result
@@ -129,7 +152,7 @@ final class BenchRunner {
         result.decodeWithGPUHT = try await timedDecode(
             codestream: codestream,
             mode: .decodeWithGPUHT,
-            fixtureLabel: fixture.label,
+            fixtureID: fixture.id,
             runs: runs, warmups: warmups,
             phaseModeLabel: ".decodeWithGPUHT")
         model.results[fixture.id] = result
@@ -139,12 +162,12 @@ final class BenchRunner {
     private func timedDecode(
         codestream: Data,
         mode: DecodeMode,
-        fixtureLabel: String,
+        fixtureID: String,
         runs: Int, warmups: Int,
         phaseModeLabel: String
     ) async throws -> TimingSamples {
         guard let model else { return TimingSamples() }
-        model.phase = .decoding(fixtureLabel, phaseModeLabel)
+        model.phase = .decoding(id: fixtureID, mode: phaseModeLabel)
 
         let decoder = J2KDecoder()
 
@@ -177,68 +200,8 @@ final class BenchRunner {
         }
     }
 
-    // MARK: - Encoder configuration
-
-    /// Canonical HT-J2K lossless config used by the in-process
-    /// performance suite (J2KMedicalCorpusEncodePerformanceTests).
-    /// Holding it stable across hosts is what makes the cross-silicon
-    /// comparison apples-to-apples.
-    private func makeLosslessHTEncoder() -> J2KEncoder {
-        let cfg = J2KEncodingConfiguration(
-            quality: 1.0, lossless: true,
-            decompositionLevels: 5, qualityLayers: 1,
-            progressionOrder: .lrcp, bitrateMode: .lossless,
-            maxThreads: 8, useHTJ2K: true, useReversibleFilter: true,
-            enableParallelCodeBlocks: true,
-            htj2kBlockFormat: .conformant
-        )
-        return J2KEncoder(encodingConfiguration: cfg)
-    }
-
-    // MARK: - Deterministic LCG fixture synthesis
-
-    /// Mirrors `Scripts/benchmarks/generate_synthetic_corpus.py`'s LCG
-    /// noise field (multiplier `1442695040888963407`) so an A-series
-    /// run can be compared byte-equivalent against the canonical
-    /// PGM corpus on M-series. We omit the modality-specific
-    /// structural overlays — they affect compression ratio but not
-    /// the timing rankings the cross-silicon arc cares about.
-    private func makeJ2KImage(for fixture: BenchFixture) -> J2KImage {
-        let n = fixture.width * fixture.height
-        let bitDepth = fixture.bitDepth
-        let bytesPerSample = (bitDepth + 7) / 8
-        precondition(bytesPerSample == 2, "16-bit corpus only")
-
-        let maxVal = (1 << bitDepth) - 1
-        var data = Data(count: n * 2)
-        var s: UInt64 = fixture.seed &* 6364136223846793005 &+ 1442695040888963407
-
-        data.withUnsafeMutableBytes { rawPtr in
-            let buf = rawPtr.bindMemory(to: UInt16.self)
-            for i in 0..<n {
-                s = s &* 6364136223846793005 &+ 1442695040888963407
-                let sample = UInt16(Int((s >> 16) & 0xFFFFFFFF) % (maxVal + 1))
-                // Big-endian byte order matches the PGM corpus written
-                // by generate_synthetic_corpus.py.
-                buf[i] = sample.bigEndian
-            }
-        }
-
-        let comp = J2KComponent(
-            index: 0,
-            bitDepth: bitDepth,
-            signed: false,
-            width: fixture.width,
-            height: fixture.height,
-            subsamplingX: 1, subsamplingY: 1,
-            data: data,
-            sampleByteOrder: .bigEndian
-        )
-        return J2KImage(
-            width: fixture.width,
-            height: fixture.height,
-            components: [comp])
-    }
+    // Fixture synthesis and the lossless HT encoder config live in
+    // `J2KSampleSource` — shared with the image viewer.
 }
 
 enum DecodeMode {

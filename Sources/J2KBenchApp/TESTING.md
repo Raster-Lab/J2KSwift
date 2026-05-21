@@ -81,18 +81,29 @@ When the red error indicator next to the tab clears, you're ready.
 
 ### 5. Run the benchmark
 
-* Inside the app, tap **▶ Run Benchmark**.
+* The app opens on **J2K Bench** — the saved-run history. On first
+  launch it's empty. Tap **New Benchmark**.
+* Every fixture is ticked by default. Leave them all ticked for the
+  full cross-silicon reading (that's what we need most), or untick a
+  few by tapping their circle for a quicker partial run. Then tap
+  **▶ Run Selected**.
 * Leave the app in the foreground. The screen will dim eventually
   but the bench keeps running.
-* The progress bar fills as each fixture completes. Total time is
-  about 3–7 minutes depending on your model. For best results,
-  plug the iPhone into a charger first so it doesn't throttle.
-* When the progress bar reaches the end, you'll see "Done — N
-  fixtures".
+* The progress bar fills as each fixture completes, and each row
+  shows a live status badge. Total time is about 3–7 minutes
+  depending on your model. For best results, plug the iPhone into a
+  charger first so it doesn't throttle.
+* When the progress bar reaches the end every fixture shows **Done**.
+  The run is saved automatically — you can quit and reopen the app
+  and it's still there in the history list, so you never have to
+  re-run just to look at the numbers.
 
 ### 6. Share the JSON back
 
-* Tap **↑ Share JSON**.
+* Tap **↑ Share Selected**. Only the ticked fixtures are exported —
+  leave them all ticked to send the full reading, or send a subset.
+  (You can also reopen a saved run from the history list later and
+  share a different subset.)
 * Pick **AirDrop** (if your Mac is nearby), **Mail**, or **Messages**.
 * Send it to the person who asked you to run this. The file name is
   something like `benchmark-results-iPhone17,1-10.1.0-warm-inproc-20261108.json`.
@@ -122,6 +133,22 @@ along with your iPhone model + iOS version. We'll dig into it.
 Apps installed via a free Personal Team expire after 7 days. Just
 plug in the iPhone, open the xcodeproj, and hit Run again. Paid
 developer team installs last a year.
+
+## Bonus — the Viewer tab
+
+The app has a second tab, **Viewer**, for actually *looking* at images
+decoded by J2KSwift. Tap **Viewer** at the bottom, then pick a source:
+
+* **Open a File** — open a JPEG 2000 (`.jp2` / `.j2k` / `.jph`) or an
+  uncompressed DICOM (`.dcm`) file from the Files app.
+* **Medical Image** — five real medical images (MR, CT, X-ray) bundled
+  in the app; tap one to view it.
+* **Benchmark Fixture** — view one of the synthetic bench fixtures.
+* **Round-trip a Photo** — pick a photo; it's compressed and decoded by
+  J2KSwift and shown with the compression ratio and PSNR.
+
+Each opens a zoomable image with its decode time. This tab is just for
+exploring — only the **Benchmarks** tab produces the JSON we need.
 
 ## What gets measured
 

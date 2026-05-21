@@ -40,6 +40,19 @@ targets:
           - "TESTING.md"
           - "project.yml"
           - "J2KBenchApp.xcodeproj"
+      # Bundled real (DICOM-derived) medical images for the Viewer tab,
+      # referenced in place from the cross-codec fixtures so they aren't
+      # duplicated into git. ~22 MB total.
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/mr_real_small_174x192.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/ct_real_small_512x512.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/xa_real_small_1024x1024.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/px_real_small_2459x1316.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/dx_real_small_2224x2798.pgm
+        buildPhase: resources
     info:
       path: Info.plist
       properties:

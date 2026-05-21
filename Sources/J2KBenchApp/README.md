@@ -16,6 +16,10 @@ in-process J2KSwift lane (encode + decode across `.cpu` /
 `.decodeGPU` / `.decodeWithGPUHT`); the cross-codec lanes (Kakadu /
 OpenJPH / Grok) stay macOS-only.
 
+The app has two tabs: **Benchmarks** (the cross-silicon bench described
+here) and **Viewer** — an image viewer / inspector, see
+[Image viewer](#image-viewer) below.
+
 ## Running on your iPhone
 
 The bench app ships as an iOS **`.xcodeproj`** wrapper at
@@ -40,11 +44,22 @@ sources with automatic provisioning.
    top of the Xcode window.
 5. Hit **Run** (⌘R). On first run, trust the developer cert under
    *Settings → General → VPN & Device Management* on the iPhone.
-6. In the app, tap **Run Benchmark**. The bench takes 2–6 minutes
-   depending on the device (large mammography fixtures dominate the
-   wall time).
-7. Tap **Share JSON** when complete and AirDrop / Mail / Message the
-   file back. Filename is
+6. The app opens on **J2K Bench** — your saved-run history (empty on
+   first launch). Tap **New Benchmark**.
+7. Every fixture is ticked by default. Untick any you want to skip
+   (tap the circle), then tap **Run Selected**. A full 10-fixture run
+   takes 2–6 minutes depending on the device (large mammography
+   fixtures dominate the wall time); a subset is proportionally
+   quicker.
+8. When the run finishes it is saved automatically — it appears in the
+   history list and survives quitting the app, so you never have to
+   re-run just to view it. Tap any fixture row for a per-fixture
+   detail screen (timing samples, min/median/max, and a bar chart).
+9. Tap **Share Selected** to export. Only the ticked fixtures go into
+   the JSON, so you can send one fixture or all ten — and you can
+   re-open a saved run from the history list any time and share a
+   different subset. AirDrop / Mail / Message the file back; the
+   filename is
    `benchmark-results-<model>-<j2k-version>-warm-inproc-<YYYYMMDD>.json`
    so it lands in the correct bucket on the compare side.
 
@@ -86,6 +101,33 @@ directly comparable.
 * Real-medical-PGM corpus — fixtures are deterministic LCG-noise
   fields. Perf rankings are valid across silicon; absolute byte
   ratios won't match the real-medical PGM reports.
+
+## Image viewer
+
+The **Viewer** tab decodes and displays JPEG 2000 images with J2KSwift.
+Four sources:
+
+* **Open a File** — pick a `.jp2` / `.j2k` / `.jph` JPEG 2000 file, or an
+  uncompressed `.dcm` DICOM file, from the Files app. JPEG 2000 files are
+  decoded directly; DICOM pixel data is read by a minimal built-in
+  uncompressed-DICOM parser and round-tripped through J2KSwift.
+* **Medical Image** — five real (DICOM-derived) medical images bundled
+  with the app: MR, CT, X-ray angiography (XA), panoramic (PX) and
+  digital radiography (DX). Each is encoded to HT-J2K lossless and
+  decoded back.
+* **Benchmark Fixture** — render any synthetic corpus fixture.
+* **Round-trip a Photo** — encode a photo from your library to HT-J2K
+  (lossless / high / medium) and decode it back, reporting the
+  compression ratio and PSNR.
+
+Each opens a detail screen with a pinch-zoom / pan canvas, the image
+metadata (dimensions, components, bit depth, colour space, sizes), and
+the J2KSwift decode time with a re-time button. 16-bit / 12-bit medical
+images are auto window/level-stretched so they're visible.
+
+The bundled medical PGMs are referenced in place from
+`Tests/Fixtures/CrossCodec/medical-real/` (see `project.yml`) — they add
+~22 MB to the app and are not duplicated into git.
 
 ## Distributing to friends/family for Diwali testing
 
