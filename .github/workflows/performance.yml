@@ -28,11 +28,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up CompressionFamily
-        uses: ./.github/actions/setup-compression-family
-        with:
-          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
-
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -114,11 +109,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up CompressionFamily
-        uses: ./.github/actions/setup-compression-family
-        with:
-          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
 
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest

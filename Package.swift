@@ -2,6 +2,22 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
+import Foundation
+
+// CompressionFamily — shared protocol surface for the Swift
+// compression-library family. For local co-development a sibling
+// `../CompressionFamily` checkout is used directly; otherwise (CI, and
+// any consumer that resolves J2KSwift via `.package(url:)`) it is
+// fetched from its public Git repository. The URL form is what makes
+// J2KSwift itself URL-consumable as a SwiftPM dependency — see #438.
+let compressionFamilyDependency: Package.Dependency = {
+    if FileManager.default.fileExists(atPath: "../CompressionFamily/Package.swift") {
+        return .package(path: "../CompressionFamily")
+    }
+    return .package(
+        url: "https://github.com/Raster-Lab/CompressionFamily.git",
+        from: "1.0.0")
+}()
 
 let package = Package(
     name: "J2KSwift",
@@ -66,11 +82,7 @@ let package = Package(
             targets: ["J2KDaemonClient"]),
     ],
     dependencies: [
-        // Shared protocol surface for the Swift compression-library
-        // family. J2KSwift conforms its public types to these protocols
-        // so callers can write generic-over-codec code that also works
-        // with JXLSwift (which adopts the same protocols).
-        .package(path: "../CompressionFamily"),
+        compressionFamilyDependency,
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
