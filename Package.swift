@@ -2,22 +2,25 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
-import Foundation
 
 // CompressionFamily — shared protocol surface for the Swift
-// compression-library family. For local co-development a sibling
-// `../CompressionFamily` checkout is used directly; otherwise (CI, and
-// any consumer that resolves J2KSwift via `.package(url:)`) it is
-// fetched from its public Git repository. The URL form is what makes
-// J2KSwift itself URL-consumable as a SwiftPM dependency — see #438.
-let compressionFamilyDependency: Package.Dependency = {
-    if FileManager.default.fileExists(atPath: "../CompressionFamily/Package.swift") {
-        return .package(path: "../CompressionFamily")
-    }
-    return .package(
-        url: "https://github.com/Raster-Lab/CompressionFamily.git",
-        from: "1.0.0")
-}()
+// compression-library family. Always resolved from its public Git
+// repository so J2KSwift stays URL-consumable as a SwiftPM dependency
+// (see #438).
+//
+// The previous `FileManager.fileExists("../CompressionFamily")` probe was
+// relative to the *current working directory*. SwiftPM evaluates a
+// dependency's manifest with CWD set to the consuming root package, so any
+// consumer that happened to have a `CompressionFamily` directory beside its
+// own package root caused J2KSwift to fall back to a `.package(path:)`
+// dependency — which a stable-versioned consumer is not allowed to depend
+// on transitively ("unstable-version package"). Always using the URL form
+// removes that footgun. For local co-development of J2KSwift +
+// CompressionFamily, use `swift package edit CompressionFamily
+// --path ../CompressionFamily`.
+let compressionFamilyDependency: Package.Dependency = .package(
+    url: "https://github.com/Raster-Lab/CompressionFamily.git",
+    from: "1.0.0")
 
 let package = Package(
     name: "J2KSwift",
