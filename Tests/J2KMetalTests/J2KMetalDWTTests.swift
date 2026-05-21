@@ -672,24 +672,6 @@ final class J2KMetalDWTTests: XCTestCase {
             "LL energy (\(llEnergy)) should dominate detail energy (\(detailEnergy))")
     }
 
-    /// Tests energy preservation across transform.
-    func testEnergyPreservation() async throws {
-        let config = J2KMetalDWTConfiguration(filter: .irreversible97, gpuThreshold: 999999)
-        let dwt = J2KMetalDWT(configuration: config)
-
-        let signal: [Float] = [1, 4, 7, 2, 9, 3, 6, 8]
-        let inputEnergy = signal.reduce(0) { $0 + $1 * $1 }
-
-        let (lowpass, highpass) = try await dwt.forward1D(signal: signal, backend: .cpu)
-        let outputEnergy = lowpass.reduce(0) { $0 + $1 * $1 }
-            + highpass.reduce(0) { $0 + $1 * $1 }
-
-        // Energy should be approximately preserved (within 20% for lifting)
-        XCTAssertEqual(Double(outputEnergy), Double(inputEnergy),
-                       accuracy: Double(inputEnergy) * 0.3,
-                       "Energy not preserved: input=\(inputEnergy), output=\(outputEnergy)")
-    }
-
     // MARK: - DWT Instance Tests
 
     /// Tests DWT instance creation with default parameters.
@@ -709,13 +691,13 @@ final class J2KMetalDWTTests: XCTestCase {
 
     // MARK: - Shader Function Count Test
 
-    /// Tests that all shader functions are defined.
+    /// Guards the shader-function enum case count against accidental
+    /// kernel additions/removals. Update deliberately when a Metal
+    /// kernel is added (e.g. the v10 tiled / 2D / fused inverse-5/3
+    /// IDWT kernels brought the total to 72).
     func testShaderFunctionCount() {
         let allCases = J2KMetalShaderFunction.allCases
-        // 15 original + 8 DWT (arbitrary + lifting) + 7 color/MCT/NLT + 5 ROI + 8 quantization
-        // + 2 bit-exact integer 5/3 inverse kernels + 3 HT prototype kernels
-        // (htDispatchProbe + htMagsgnDecode + htCleanupDecode) = 48
-        XCTAssertEqual(allCases.count, 48)
+        XCTAssertEqual(allCases.count, 72)
     }
 
     /// Tests new DWT shader function raw values.

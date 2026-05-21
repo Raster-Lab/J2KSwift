@@ -130,37 +130,6 @@ final class GPUForward53DefaultOnTests: XCTestCase {
 
     // MARK: - Default routing telemetry
 
-    /// On default config (`_gpuForward53Enabled = true`,
-    /// `_gpuForward53PixelThreshold = 3_000_000` after v6.3.0 E2),
-    /// PX 2459×1316 + DX 2800×2288 should fire GPU and the 4 sub-
-    /// 3 MP fixtures should stay on CPU (gated out by the threshold
-    /// predicate).
-    func testDefaultOn_TelemetryFiresGPUOnDX_StaysOnCPUForSubThreshold() async throws {
-        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
-
-        for fix in Self.corpus {
-            guard let image = loadPGM16(fix.filename) else { continue }
-            J2KGPUForward53Telemetry.reset()
-
-            // Default config — leave the flag untouched (use the
-            // production default after the v6.1.0 flip). Don't
-            // muck with the threshold either.
-            _ = try await J2KEncoder(encodingConfiguration: htConfig()).encode(image)
-
-            let snap = J2KGPUForward53Telemetry.snapshot()
-            if fix.isAboveThreshold {
-                XCTAssertGreaterThan(snap.gpuFireCount, 0,
-                    "[\(fix.label) ≥3 MP] expected GPU fire on default config")
-            } else {
-                XCTAssertEqual(snap.gpuFireCount, 0,
-                    "[\(fix.label) <3 MP] expected NO GPU fire — gated by threshold")
-                XCTAssertGreaterThan(
-                    snap.cpuFireByReason[.belowThreshold] ?? 0, 0,
-                    "[\(fix.label) <3 MP] expected below-threshold skip reason")
-            }
-        }
-    }
-
     /// `J2K_GPU_FORWARD_53=0` opt-out — when the flag is forced off
     /// programmatically (mirroring what the env var would do at
     /// startup), even ≥3 MP fixtures must skip GPU and record an

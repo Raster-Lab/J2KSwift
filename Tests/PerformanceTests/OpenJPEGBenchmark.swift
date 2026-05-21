@@ -489,8 +489,8 @@ final class OpenJPEGComparisonTests: XCTestCase {
             .lossy2bpp:      2.0,
             .lossy1bpp:      2.0,
             .lossy0_5bpp:    2.0,
-            .htj2kLossless:  3.0,
-            .htj2kLossy2bpp: 3.0,
+            .htj2kLossless:  10.0,
+            .htj2kLossy2bpp: 10.0,
         ]
         let config0 = BenchmarkConfiguration(imageSize: .size256, codingMode: .lossless,
                                              iterations: 1, warmupIterations: 0)
@@ -513,7 +513,8 @@ final class OpenJPEGComparisonTests: XCTestCase {
         let runner = OpenJPEGBenchmarkRunner(includeOpenJPEG: false)
         let data = BenchmarkTestImageGenerator.generate(config: config)
         if let comp = runner.runSingle(config: config, operation: .decode, imageData: data) {
-            XCTAssertEqual(comp.performanceTarget, 1.5, accuracy: 0.01)
+            // Part-1 lossless decode @256 target is 8× — see J2KOpenJPEGBenchmark.performanceTarget.
+            XCTAssertEqual(comp.performanceTarget, 8.0, accuracy: 0.01)
         }
     }
 }
@@ -811,7 +812,8 @@ final class HTJ2KBenchmarkTests: XCTestCase {
         let runner = OpenJPEGBenchmarkRunner(includeOpenJPEG: false)
         let data = BenchmarkTestImageGenerator.generate(config: config)
         if let comp = runner.runSingle(config: config, operation: .encode, imageData: data) {
-            XCTAssertEqual(comp.performanceTarget, 3.0, accuracy: 0.01)
+            // HT lossless encode @256 target is 10× — see J2KOpenJPEGBenchmark.performanceTarget.
+            XCTAssertEqual(comp.performanceTarget, 10.0, accuracy: 0.01)
         }
     }
 }

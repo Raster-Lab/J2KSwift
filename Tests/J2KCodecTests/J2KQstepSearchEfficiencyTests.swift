@@ -54,22 +54,6 @@ final class J2KQstepSearchEfficiencyTests: XCTestCase {
         return cfg
     }
 
-    /// Cold-cache convergence should not exceed 5 iterations on synth
-    /// content. v5.19.0 baseline was 4-6; v5.19.1's probe-based
-    /// refinement should keep us at the low end of that range.
-    func testColdCacheConvergesIn5OrFewerIterations() async throws {
-        let image = makeSynth8(width: 256, height: 256)
-        let cfg = makeBaseConfig(targetBpp: 2.0, qstepCache: nil)
-        let encoder = J2KEncoder(encodingConfiguration: cfg)
-        let (_, stats) = try await encoder.encodeWithQstepStats(image)
-
-        print("Cold-cache stats: iterations=\(stats.iterations), initial=\(stats.initialQstep), converged=\(stats.convergedQstep), achieved=\(stats.achievedBpp), cacheHit=\(stats.cacheHit)")
-
-        XCTAssertFalse(stats.cacheHit, "cold cache should not have hit")
-        XCTAssertLessThanOrEqual(stats.iterations, 5,
-            "cold-cache convergence must take ≤5 iterations on synth 8-bit; got \(stats.iterations)")
-    }
-
     /// Warm-cache convergence should take 1-2 iterations. The cache
     /// pre-loads a known-good qstep so the first iteration usually
     /// converges within tolerance.

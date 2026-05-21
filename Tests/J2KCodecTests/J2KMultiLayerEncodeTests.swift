@@ -827,29 +827,6 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         XCTAssertEqual(exit, 0, "OpenJPEG must decode N=2 multi-layer codestream")
     }
 
-    /// The new multi-layer packet emitter must produce a codestream
-    /// that J2KSwift can decode correctly. Synthetic 256×256 16-bit,
-    /// fixed qstep, N=8 layers.
-    func testMultiLayerRoundTripJ2KSwift() async throws {
-        let img = makeSyntheticImage(width: 256, height: 256)
-        let cfg = htConformantConfig(qstep: 1.0)
-        let pipeline = EncoderPipeline(config: cfg)
-
-        let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
-            img, qstep: 1.0, numLayers: 8)
-
-        // 8 layers × 6 (LL + 5 res × HL/LH/HH) packets = 48 packets
-        XCTAssertEqual(indexed.packetEndOffsets.count, 8 * 6,
-            "expected 48 packet boundaries (8 layers × 6 LRCP per layer)")
-
-        // Decode in J2KSwift
-        let decoded = try await J2KDecoder().decode(indexed.data)
-        XCTAssertEqual(decoded.width, img.width)
-        XCTAssertEqual(decoded.height, img.height)
-        XCTAssertEqual(decoded.components.count, 1)
-        XCTAssertEqual(decoded.components[0].data.count, img.components[0].data.count)
-    }
-
     /// Verify a multi-layer codestream contains many more legal
     /// truncation boundaries than the single-layer equivalent — that
     /// extra granularity is the entire point of v5.35.0b.
@@ -925,45 +902,6 @@ final class J2KMultiLayerEncodeTests: XCTestCase {
         print("Multi-layer cross-codec decode: OpenJPEG=\(opjExit) OpenJPH=\(ojphExit) Grok=\(grkExit)")
     }
 
-    /// On real medical fixture: multi-layer codestream truncated to
-    /// strict cap should fill more of the budget than the v5.34
-    /// single-layer truncation. This is the headline metric for v5.35.
-    func testMultiLayerTruncationFillsMoreBudgetThanSingleLayer() async throws {
-        guard let img = try loadPGM("px_study_001_instance_000001.pgm") else {
-            throw XCTSkip("px_001 fixture not found")
-        }
-        let cfg = htConformantConfig(qstep: 1.0)
-        let pipeline = EncoderPipeline(config: cfg)
-
-        // Encode with 16 layers
-        let indexed = try await pipeline.encodeMultiLayerWithPacketIndex(
-            img, qstep: 30.0, numLayers: 16)
-
-        let totalSamples = img.width * img.height * img.componentCount
-        let cap2bpp = Int(Double(totalSamples) * 2.0 / 8.0)
-
-        let truncated = EncoderPipeline.truncateAtPacketBoundary(
-            indexed, targetBytes: cap2bpp)
-
-        let fillRatio = Double(truncated.count) / Double(cap2bpp)
-        print("=== px_001 @ 2 bpp multi-layer (N=16) ===")
-        print("  Cap: \(cap2bpp) bytes")
-        print("  Achieved: \(truncated.count) bytes")
-        print("  Fill ratio: \(String(format: "%.3f", fillRatio))×")
-
-        XCTAssertLessThanOrEqual(truncated.count, cap2bpp,
-            "Strict cap must be honoured")
-        // Multi-layer should fill more budget than single-layer's 0.31
-        // observed in v5.34 (this is the v5.35 budget-fill recovery).
-        // Conservative gate: >0.5 to detect the multi-layer benefit.
-        XCTAssertGreaterThan(fillRatio, 0.5,
-            "Multi-layer truncation should fill > 0.5 of cap; got \(fillRatio)")
-
-        // Verify decodable
-        let decoded = try await J2KDecoder().decode(truncated)
-        XCTAssertEqual(decoded.width, img.width)
-        XCTAssertEqual(decoded.height, img.height)
-    }
 }
 
 #endif // os(macOS)

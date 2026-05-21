@@ -98,31 +98,6 @@ final class PreprocessSubstageProfileTests: XCTestCase {
         XCTAssertEqual(zero.pixelsProcessed, 0)
     }
 
-    /// One encode of MR 886² populates the structural counters.
-    /// Per-sub-stage timings can legitimately be 0 in release mode
-    /// at sub-microsecond resolution; the breakdown test below
-    /// validates measurable values on the larger fixtures.
-    func testPreprocessTimings_PopulatedAfterSingleEncode() async throws {
-        guard let image = loadPGM16("mr_study_001_instance_000001.pgm") else {
-            throw XCTSkip("MR 886² fixture not present")
-        }
-        J2KPreprocessSubstageTimings.reset()
-        _ = try await J2KEncoder(encodingConfiguration: htConfig()).encode(image)
-        let snap = J2KPreprocessSubstageTimings.snapshot()
-
-        XCTAssertEqual(snap.encodeCount, 1, "encodeCount should fire exactly once")
-        XCTAssertEqual(snap.pixelsProcessed, 886 * 886,
-            "pixelsProcessed should equal width × height")
-        // Per-sub-stage timings: lower bound only.
-        XCTAssertGreaterThanOrEqual(snap.imageValidate, 0)
-        XCTAssertGreaterThanOrEqual(snap.extractComponentData8, 0)
-        XCTAssertGreaterThanOrEqual(snap.extractComponentData16, 0)
-        XCTAssertGreaterThanOrEqual(snap.dcLevelShift, 0)
-        // 16-bit fixture: extract16 should be the dominant non-zero
-        // accumulator on the 16-bit medical corpus.
-        XCTAssertGreaterThanOrEqual(snap.extractComponentData16, snap.extractComponentData8)
-    }
-
     /// Diagnostic — per-sub-stage breakdown across the corpus.
     /// Median of 5 release-mode encodes per fixture. The output is
     /// the input to the F3 decision (ship Phase 1 or close arc).

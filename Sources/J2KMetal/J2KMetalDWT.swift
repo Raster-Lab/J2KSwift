@@ -3563,7 +3563,12 @@ public actor J2KMetalDWT {
         let llW = subbands.llWidth
         let llH = subbands.llHeight
         _ = (llW, width / 2)  // captured for clarity; halfWH unused at this layer
-        let halfHH = height / 2
+        // High-band height is H − llH (canvas-anchored), not H/2: at an
+        // odd tile-component canvas Y origin the spec partition is uneven
+        // (LL = floor(H/2), LH/HH = ceil(H/2)), so H/2 under-sizes
+        // colHighBuffer by one row. Mirrors the v8.3 fix on
+        // `inverse2DInt32MultiLevelFused`; this call site was missed by it.
+        let halfHH = height - llH
 
         func makeBuffer(size: Int) throws -> any MTLBuffer {
             guard let buffer = device.makeBuffer(
@@ -4282,8 +4287,13 @@ public actor J2KMetalDWT {
         let height = subbands.originalHeight
         let llW = subbands.llWidth
         let llH = subbands.llHeight
-        let halfHH = height / 2
-        let halfWH = width / 2
+        // Canvas-anchored high-band dims (H − llH, W − llW), not H/2 / W/2:
+        // at an odd tile-component canvas origin the spec partition is
+        // uneven, so H/2 / W/2 drop the final LH/HH row / HL/HH column.
+        // Mirrors the v8.3 `inverse2DInt32MultiLevelFused` fix; this
+        // per-level call site was missed by it.
+        let halfHH = height - llH
+        let halfWH = width - llW
         let hOddOrigin = (subbands.tileOriginX & 1) == 1
         let vOddOrigin = (subbands.tileOriginY & 1) == 1
 
