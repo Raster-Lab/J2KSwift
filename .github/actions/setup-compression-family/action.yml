@@ -1,0 +1,71 @@
+name: Setup CompressionFamily
+description: >-
+  Clones the private Raster-Lab/CompressionFamily package as a sibling
+  directory of the J2KSwift checkout, so the
+  `.package(path: "../CompressionFamily")` dependency in Package.swift
+  resolves on CI runners. No-op if CompressionFamily is already present.
+  Targets macOS runners (J2KSwift is an Apple-only project).
+
+inputs:
+  deploy-key:
+    description: >-
+      SSH private deploy key with read access to
+      Raster-Lab/CompressionFamily. Pass the J2KSwift Actions secret
+      COMPRESSION_FAMILY_DEPLOY_KEY. The matching public key must be
+      registered as a Deploy Key on the CompressionFamily repository.
+    required: true
+  ref:
+    description: Branch, tag, or SHA of CompressionFamily to check out.
+    required: false
+    default: master
+  package-path:
+    description: >-
+      Path to the J2KSwift checkout, relative to the runner's working
+      directory. Defaults to "." (J2KSwift checked out at the workspace
+      root). Set this when J2KSwift is checked out into a sub-directory
+      (e.g. "J2KSwift" in the DICOMKit downstream workflow) so
+      CompressionFamily lands as its sibling.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Clone CompressionFamily (sibling path dependency)
+      shell: bash
+      env:
+        CF_DEPLOY_KEY: ${{ inputs.deploy-key }}
+        CF_REF: ${{ inputs.ref }}
+        CF_PKG_PATH: ${{ inputs.package-path }}
+      run: |
+        set -euo pipefail
+
+        # Package.swift references ../CompressionFamily relative to the
+        # J2KSwift package root. Clone it as a sibling of that root so
+        # SwiftPM resolves the path dependency.
+        DEST="$CF_PKG_PATH/../CompressionFamily"
+
+        if [ -d "$DEST/.git" ]; then
+          echo "CompressionFamily already present at $DEST — skipping clone."
+          exit 0
+        fi
+
+        if [ -z "${CF_DEPLOY_KEY//[[:space:]]/}" ]; then
+          echo "::error::COMPRESSION_FAMILY_DEPLOY_KEY is not set. Add the" \
+               "private SSH deploy key as an Actions secret on J2KSwift" \
+               "(Settings -> Secrets and variables -> Actions) and register" \
+               "its public half as a Deploy Key on Raster-Lab/CompressionFamily."
+          exit 1
+        fi
+
+        KEY_FILE="$(mktemp)"
+        printf '%s\n' "$CF_DEPLOY_KEY" > "$KEY_FILE"
+        chmod 600 "$KEY_FILE"
+        trap 'rm -f "$KEY_FILE"' EXIT
+
+        GIT_SSH_COMMAND="ssh -i $KEY_FILE -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+          git clone --depth 1 --branch "$CF_REF" \
+            git@github.com:Raster-Lab/CompressionFamily.git \
+            "$DEST"
+
+        echo "CompressionFamily checked out ($CF_REF) at $(cd "$DEST" && pwd)"

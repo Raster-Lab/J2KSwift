@@ -39,6 +39,12 @@ jobs:
         with:
           path: J2KSwift
 
+      - name: Set up CompressionFamily
+        uses: ./J2KSwift/.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+          package-path: J2KSwift
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:

@@ -28,6 +28,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -67,6 +72,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -104,6 +114,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
 
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
@@ -143,6 +158,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -180,6 +200,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
 
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
@@ -219,6 +244,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -253,88 +283,10 @@ jobs:
           path: Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md
           retention-days: 90
 
-  cross-platform-conformance:
-    name: Cross-Platform Conformance (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    container:
-      image: swift:6.2
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Cache SPM dependencies
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: ${{ runner.os }}-spm-conformance-${{ hashFiles('Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-conformance-
-
-      - name: Build
-        run: swift build
-
-      - name: Run conformance tests on Linux
-        continue-on-error: true
-        run: |
-          swift test --parallel --filter Conformance \
-            --skip Benchmark \
-            --skip Stress \
-            --skip Diagnostic \
-            --skip Fuzz \
-            --skip PerformanceTuning \
-            --skip LargeBlock \
-            --skip EndToEnd \
-            --skip ClientServer
-
-  openjpeg-interoperability:
-    name: OpenJPEG Interoperability
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    container:
-      image: swift:6.2
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Cache SPM dependencies
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: ${{ runner.os }}-spm-interop-${{ hashFiles('Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-interop-
-
-      - name: Check OpenJPEG availability
-        run: |
-          if command -v opj_compress &> /dev/null; then
-            echo "OpenJPEG found: $(opj_compress -h 2>&1 | head -1)"
-          else
-            echo "OpenJPEG not available — running infrastructure tests only"
-          fi
-
-      - name: Build
-        run: swift build
-
-      - name: Run interoperability tests
-        continue-on-error: true
-        run: |
-          swift test --filter J2KInteroperabilityTests \
-            --skip Benchmark \
-            --skip Stress \
-            --skip Diagnostic \
-            --skip Fuzz \
-            --skip PerformanceTuning \
-            --skip LargeBlock \
-            --skip EndToEnd \
-            --skip ClientServer
-
   conformance-gate:
     name: Conformance Gate
-    needs: [part1-conformance, part2-conformance, part3-part10-conformance, part4-conformance, part15-conformance, jp3d-conformance, cross-platform-conformance, openjpeg-interoperability]
-    runs-on: ubuntu-latest
+    needs: [part1-conformance, part2-conformance, part3-part10-conformance, part4-conformance, part15-conformance, jp3d-conformance]
+    runs-on: macos-15
     if: always()
 
     steps:
@@ -347,17 +299,13 @@ jobs:
           echo "Part 4 (Final):       ${{ needs.part4-conformance.result }}"
           echo "Part 15 (HTJ2K):      ${{ needs.part15-conformance.result }}"
           echo "Part 10 (JP3D ext):   ${{ needs.jp3d-conformance.result }}"
-          echo "Cross-Platform:       ${{ needs.cross-platform-conformance.result }}"
-          echo "OpenJPEG Interop:     ${{ needs.openjpeg-interoperability.result }}"
 
           if [ "${{ needs.part1-conformance.result }}" != "success" ] || \
              [ "${{ needs.part2-conformance.result }}" != "success" ] || \
              [ "${{ needs.part3-part10-conformance.result }}" != "success" ] || \
              [ "${{ needs.part4-conformance.result }}" != "success" ] || \
              [ "${{ needs.part15-conformance.result }}" != "success" ] || \
-             [ "${{ needs.jp3d-conformance.result }}" != "success" ] || \
-             [ "${{ needs.cross-platform-conformance.result }}" != "success" ] || \
-             [ "${{ needs.openjpeg-interoperability.result }}" != "success" ]; then
+             [ "${{ needs.jp3d-conformance.result }}" != "success" ]; then
             echo "::error::Conformance gate failed — one or more conformance jobs did not succeed."
             exit 1
           fi

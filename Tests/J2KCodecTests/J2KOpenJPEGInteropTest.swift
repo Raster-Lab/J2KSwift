@@ -95,7 +95,8 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         proc.executableURL = URL(fileURLWithPath: opjDecompress)
         proc.arguments = ["-i", j2kPath, "-o", pgmPath]
         proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
+        let errorPipe = Pipe()
+        proc.standardError = errorPipe
         try proc.run()
         proc.waitUntilExit()
 
@@ -103,7 +104,7 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
             "\(name): opj_decompress exit code \(proc.terminationStatus)")
 
         guard proc.terminationStatus == 0 else {
-            let stderr = String(data: (proc.standardError as! Pipe).fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             XCTFail("\(name): opj_decompress failed: \(stderr)")
             return (-1, -1)
         }
@@ -726,11 +727,12 @@ final class J2KOpenJPEGInteropTest: XCTestCase {
         proc.executableURL = URL(fileURLWithPath: opjDecompress)
         proc.arguments = ["-i", j2kPath, "-o", ppmPath]
         proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
+        let errorPipe = Pipe()
+        proc.standardError = errorPipe
         try proc.run()
         proc.waitUntilExit()
 
-        let stderrData = (proc.standardError as! Pipe).fileHandleForReading.readDataToEndOfFile()
+        let stderrData = errorPipe.fileHandleForReading.readDataToEndOfFile()
         let stderrStr = String(data: stderrData, encoding: .utf8) ?? ""
         if proc.terminationStatus != 0 {
             print("[blackbuck] opj_decompress stderr: \(stderrStr)")

@@ -25,45 +25,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
           swift-version: '6.2'
-
-      - name: Print Swift version
-        run: swift --version
-
-      - name: Build
-        run: swift build -v
-
-      - name: Run tests
-        continue-on-error: true
-        run: |
-          swift test --parallel -v \
-            --skip Benchmark \
-            --skip Stress \
-            --skip Diagnostic \
-            --skip Fuzz \
-            --skip PerformanceTuning \
-            --skip LargeBlock \
-            --skip EndToEnd \
-            --skip ClientServer
-        timeout-minutes: 20
-
-      - name: Build release
-        run: swift build -c release -v
-
-  # Linux build and test
-  test-linux:
-    name: Test on Linux
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    container:
-      image: swift:6.2
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
 
       - name: Print Swift version
         run: swift --version
