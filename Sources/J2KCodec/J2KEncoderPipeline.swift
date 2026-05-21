@@ -3769,11 +3769,17 @@ struct EncoderPipeline: Sendable {
             // Extract coefficients (Int32 reversible path only).
             d.subbandCoefficients.withUnsafeBufferPointer { src in
                 coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                    // A degenerate / zero-coefficient block leaves one of
+                    // these buffers empty (baseAddress == nil). Skip the
+                    // copy — coeffsBuffer stays zero-filled and the block
+                    // is handled as a zero block below.
+                    guard let srcBase = src.baseAddress,
+                          let dstBase = dst.baseAddress else { return }
                     for row in 0..<d.height {
                         let srcStart = (d.originY + row) * d.subbandWidth + d.originX
                         memcpy(
-                            dst.baseAddress! + row * d.width,
-                            src.baseAddress! + srcStart,
+                            dstBase + row * d.width,
+                            srcBase + srcStart,
                             d.width * MemoryLayout<Int32>.size)
                     }
                 }
@@ -3909,6 +3915,14 @@ struct EncoderPipeline: Sendable {
         tileIndex: Int = 0,
         geometryCollector: GeometryCollector? = nil
     ) async throws -> [J2KCodeBlock] {
+        // Force the one-time init of `useNEONHotPath` on this thread
+        // before any parallel code-block dispatch. `static let` is
+        // already thread-safe (the Swift runtime guards it with a
+        // one-time token), so this is not a correctness fix — it just
+        // keeps the worker threads from each entering `_dispatch_once`
+        // contention on the first fused HT encode.
+        _ = HTBlockEncoderConformant.useNEONHotPath
+
         // Build lightweight block descriptors (no coefficient copy).
         var deferred: [DeferredCodeBlock] = []
         var blockIndex = 0
@@ -4213,8 +4227,10 @@ struct EncoderPipeline: Sendable {
                                 bpPop = [Int](repeating: 0, count: totalBitPlanes)
                                 floatCoeffs.withUnsafeBufferPointer { src in
                                     coeffsBuffer.withUnsafeMutableBufferPointer { dst in
-                                        let dstBase = dst.baseAddress!
-                                        let srcBase = src.baseAddress!
+                                        // Degenerate / empty block — skip;
+                                        // coeffsBuffer stays zero-filled.
+                                        guard let dstBase = dst.baseAddress,
+                                              let srcBase = src.baseAddress else { return }
                                         for row in 0..<d.height {
                                             let srcRow = (d.originY + row) * d.subbandWidth + d.originX
                                             let dstRow = row * d.width
@@ -4235,11 +4251,15 @@ struct EncoderPipeline: Sendable {
                             } else {
                             d.subbandCoefficients.withUnsafeBufferPointer { src in
                                 coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                                    // Degenerate / empty block — skip;
+                                    // coeffsBuffer stays zero-filled.
+                                    guard let srcBase = src.baseAddress,
+                                          let dstBase = dst.baseAddress else { return }
                                     for row in 0..<d.height {
                                         let srcStart = (d.originY + row) * d.subbandWidth + d.originX
                                         memcpy(
-                                            dst.baseAddress! + row * d.width,
-                                            src.baseAddress! + srcStart,
+                                            dstBase + row * d.width,
+                                            srcBase + srcStart,
                                             d.width * MemoryLayout<Int32>.size
                                         )
                                     }
@@ -4393,8 +4413,10 @@ struct EncoderPipeline: Sendable {
                     bpPop = [Int](repeating: 0, count: totalBitPlanes)
                     floatCoeffs.withUnsafeBufferPointer { src in
                         coeffsBuffer.withUnsafeMutableBufferPointer { dst in
-                            let dstBase = dst.baseAddress!
-                            let srcBase = src.baseAddress!
+                            // Degenerate / empty block — skip;
+                            // coeffsBuffer stays zero-filled.
+                            guard let dstBase = dst.baseAddress,
+                                  let srcBase = src.baseAddress else { return }
                             for row in 0..<d.height {
                                 let srcRow = (d.originY + row) * d.subbandWidth + d.originX
                                 let dstRow = row * d.width
@@ -4415,11 +4437,15 @@ struct EncoderPipeline: Sendable {
                 } else {
                 d.subbandCoefficients.withUnsafeBufferPointer { src in
                     coeffsBuffer.withUnsafeMutableBufferPointer { dst in
+                        // Degenerate / empty block — skip;
+                        // coeffsBuffer stays zero-filled.
+                        guard let srcBase = src.baseAddress,
+                              let dstBase = dst.baseAddress else { return }
                         for row in 0..<d.height {
                             let srcStart = (d.originY + row) * d.subbandWidth + d.originX
                             memcpy(
-                                dst.baseAddress! + row * d.width,
-                                src.baseAddress! + srcStart,
+                                dstBase + row * d.width,
+                                srcBase + srcStart,
                                 d.width * MemoryLayout<Int32>.size
                             )
                         }
