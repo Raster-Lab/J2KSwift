@@ -1772,7 +1772,13 @@ struct PipelineTimer: Sendable {
         let total = totalSeconds
         return stages.map { s in
             let pct = total > 0 ? (s.seconds / total * 100) : 0
-            return String(format: "  %-24s %8.3f ms (%5.1f%%)", s.stage, s.seconds * 1000, pct)
+            // `%s` SIGSEGVs on a Swift String passed via varargs (it is
+            // read as a C `char *`); pad the stage name in Swift and
+            // keep `String(format:)` for the numeric columns only.
+            let stageCol = s.stage.count >= 24 ? s.stage
+                : s.stage + String(repeating: " ", count: 24 - s.stage.count)
+            return "  \(stageCol) "
+                + String(format: "%8.3f ms (%5.1f%%)", s.seconds * 1000, pct)
         }.joined(separator: "\n")
     }
 }

@@ -1181,6 +1181,21 @@ public struct ValidationReportGenerator: Sendable {
         let bar  = String(repeating: "=", count: 90)
         let dash = String(repeating: "-", count: 90)
 
+        // String-column padding. `String(format:)` with a `%s` specifier
+        // SIGSEGVs — `%s` expects a C string (`char *`), but a Swift
+        // `String`/`NSString` passed through varargs is read as a raw
+        // (often tagged) pointer and `strlen`'d on a bogus address. Pad
+        // in Swift and interpolate; keep `String(format:)` for numeric
+        // specifiers only. (Same fix as J2KConcurrencyTuning, v9.9.)
+        func padL(_ s: String, _ width: Int) -> String {
+            s.count >= width ? s
+                : s + String(repeating: " ", count: width - s.count)
+        }
+        func padR(_ s: String, _ width: Int) -> String {
+            s.count >= width ? s
+                : String(repeating: " ", count: width - s.count) + s
+        }
+
         lines.append(bar)
         lines.append("J2KSwift v2.0 — Performance Validation Report (Week 287–289)")
         lines.append("Platform : \(report.capabilities.platform.rawValue)")
@@ -1193,34 +1208,34 @@ public struct ValidationReportGenerator: Sendable {
         lines.append(dash)
         for (stage, u) in report.simdUtilisation.stageUtilisation.sorted(by: { $0.key < $1.key }) {
             let bar2 = String(repeating: "█", count: Int(u * 20))
-            lines.append(String(format: "  %-38s  %3d%%  %s", stage as NSString, Int(u * 100), bar2))
+            lines.append("  \(padL(stage, 38))  \(padR(String(Int(u * 100)), 3))%  \(bar2)")
         }
-        lines.append(String(format: "\n  Overall: %.1f%%  Target: %.0f%%  %s",
-                            report.simdUtilisation.overallUtilisation * 100,
-                            SIMDUtilisationReport.targetUtilisation * 100,
-                            report.simdUtilisation.meetsTarget ? "✓ PASS" : "✗ FAIL"))
+        lines.append("\n  Overall: "
+            + String(format: "%.1f", report.simdUtilisation.overallUtilisation * 100)
+            + "%  Target: "
+            + String(format: "%.0f", SIMDUtilisationReport.targetUtilisation * 100)
+            + "%  \(report.simdUtilisation.meetsTarget ? "✓ PASS" : "✗ FAIL")")
 
         // Cache layout
         lines.append("\n[Cache-Friendly Layout Verification]")
         lines.append(dash)
         for result in report.cacheLayout {
             let status = result.passes ? "✓ PASS" : "✗ FAIL"
-            lines.append(String(format: "  %-40s  %s", result.structureName as NSString, status))
+            lines.append("  \(padL(result.structureName, 40))  \(status)")
         }
 
         // Memory bandwidth
         lines.append("\n[Memory Bandwidth (bytes / MP, 3-component 8-bit)]")
         lines.append(dash)
-        lines.append(String(format: "  %-32s  %12s  %12s  %12s",
-                            "Stage", "Read", "Write", "Total"))
+        lines.append("  \(padL("Stage", 32))  \(padR("Read", 12))  "
+            + "\(padR("Write", 12))  \(padR("Total", 12))")
         lines.append(dash)
         for stage in MemoryBandwidthAnalysis.PipelineStage.allCases {
             let r = report.memoryBandwidth.bytesReadPerMP[stage] ?? 0
             let w = report.memoryBandwidth.bytesWrittenPerMP[stage] ?? 0
             let t = r + w
-            lines.append(String(format: "  %-32s  %12s  %12s  %12s",
-                                stage.rawValue as NSString,
-                                formatBytes(r), formatBytes(w), formatBytes(t)))
+            lines.append("  \(padL(stage.rawValue, 32))  \(padR(formatBytes(r), 12))  "
+                + "\(padR(formatBytes(w), 12))  \(padR(formatBytes(t), 12))")
         }
 
         // Allocation audit
@@ -1229,23 +1244,23 @@ public struct ValidationReportGenerator: Sendable {
         lines.append(String(format: "  Total allocations : %d", report.allocationAudit.events.count))
         lines.append(String(format: "  Pooled            : %.0f%%", report.allocationAudit.pooledFraction * 100))
         lines.append(String(format: "  Cache-line aligned: %.0f%%", report.allocationAudit.alignedFraction * 100))
-        lines.append(String(format: "  Total bytes       : %s", formatBytes(Double(report.allocationAudit.totalBytes))))
+        lines.append("  Total bytes       : "
+            + formatBytes(Double(report.allocationAudit.totalBytes)))
 
         // Apple Silicon sweep
         if let sweep = report.appleSiliconSweep {
             lines.append("\n[Apple Silicon Backend Sweep]")
             lines.append(dash)
-            lines.append(String(format: "  %-16s  %-14s  %-14s  %-12s  %-10s",
-                                "Backend", "Encode MP/s", "Decode MP/s", "Speedup", "Mem (MB)"))
+            lines.append("  \(padL("Backend", 16))  \(padL("Encode MP/s", 14))  "
+                + "\(padL("Decode MP/s", 14))  \(padL("Speedup", 12))  \(padL("Mem (MB)", 10))")
             lines.append(dash)
             for r in sweep {
                 let memMB = r.peakMemoryBytes / (1024 * 1024)
-                lines.append(String(format: "  %-16s  %14.1f  %14.1f  %10.1fx  %10d",
-                                    r.backend.rawValue as NSString,
-                                    r.encodeThroughputMP,
-                                    r.decodeThroughputMP,
-                                    r.encodeSpeedup,
-                                    memMB))
+                lines.append("  \(padL(r.backend.rawValue, 16))  "
+                    + "\(padR(String(format: "%.1f", r.encodeThroughputMP), 14))  "
+                    + "\(padR(String(format: "%.1f", r.decodeThroughputMP), 14))  "
+                    + "\(padR(String(format: "%.1f", r.encodeSpeedup), 10))x  "
+                    + "\(padR(String(memMB), 10))")
             }
         }
 
@@ -1253,16 +1268,14 @@ public struct ValidationReportGenerator: Sendable {
         if let sweep = report.intelSweep {
             lines.append("\n[Intel x86-64 Benchmark Sweep]")
             lines.append(dash)
-            lines.append(String(format: "  %-12s  %-8s  %-14s  %-14s  %-10s",
-                                "SIMD Level", "Threads", "Encode MP/s", "Decode MP/s", "Cache Miss"))
+            lines.append("  \(padL("SIMD Level", 12))  \(padL("Threads", 8))  "
+                + "\(padL("Encode MP/s", 14))  \(padL("Decode MP/s", 14))  \(padL("Cache Miss", 10))")
             lines.append(dash)
             for r in sweep {
-                lines.append(String(format: "  %-12s  %-8d  %14.1f  %14.1f  %8.1f%%",
-                                    r.simdLevel.rawValue as NSString,
-                                    r.threadCount,
-                                    r.encodeThroughputMP,
-                                    r.decodeThroughputMP,
-                                    r.cacheMissRate * 100))
+                lines.append("  \(padL(r.simdLevel.rawValue, 12))  \(padL(String(r.threadCount), 8))  "
+                    + "\(padR(String(format: "%.1f", r.encodeThroughputMP), 14))  "
+                    + "\(padR(String(format: "%.1f", r.decodeThroughputMP), 14))  "
+                    + "\(padR(String(format: "%.1f", r.cacheMissRate * 100), 7))%")
             }
         }
 
@@ -1270,16 +1283,16 @@ public struct ValidationReportGenerator: Sendable {
         if let cmp = report.openJPEGComparison {
             lines.append("\n[Final OpenJPEG Comparison — \(cmp.platform.rawValue)]")
             lines.append(dash)
-            lines.append(String(format: "  %-40s  %-10s  %-10s  %-8s  %-8s",
-                                "Config", "J2K (ms)", "OPJ (ms)", "Ratio", "Target"))
+            lines.append("  \(padL("Config", 40))  \(padL("J2K (ms)", 10))  "
+                + "\(padL("OPJ (ms)", 10))  \(padL("Ratio", 8))  \(padL("Target", 8))")
             lines.append(dash)
             for dp in cmp.dataPoints {
                 let j2k = String(format: "%.1f", dp.j2kSwiftEncodeSeconds * 1000)
                 let opj = dp.openJPEGEncodeSeconds.map { String(format: "%.1f", $0 * 1000) } ?? "N/A"
                 let ratio = dp.encodeSpeedRatio.map { String(format: "%.2fx", $0) } ?? "N/A"
                 let meets = dp.meetsLosslessEncodeTarget.map { $0 ? "✓" : "✗" } ?? "—"
-                lines.append(String(format: "  %-40s  %10s  %10s  %8s  %8s",
-                                    dp.label as NSString, j2k, opj, ratio, meets))
+                lines.append("  \(padL(dp.label, 40))  \(padR(j2k, 10))  "
+                    + "\(padR(opj, 10))  \(padR(ratio, 8))  \(padR(meets, 8))")
             }
             lines.append(String(format: "\n  Encode targets met: %d / %d",
                                 cmp.encodeTargetsMet, cmp.dataPoints.count))
@@ -1290,8 +1303,9 @@ public struct ValidationReportGenerator: Sendable {
             lines.append("\n[Performance Gaps (Remaining Work)]")
             lines.append(dash)
             for g in gap.gaps {
-                lines.append(String(format: "  ✗ %-42s  %.2fx  (target %.1fx)",
-                                    g.label as NSString, g.achievedRatio, g.targetRatio))
+                lines.append("  ✗ \(padL(g.label, 42))  "
+                    + String(format: "%.2fx", g.achievedRatio)
+                    + "  (target " + String(format: "%.1fx", g.targetRatio) + ")")
                 lines.append("      → \(g.recommendation)")
             }
         } else {
