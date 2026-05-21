@@ -36,6 +36,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up CompressionFamily
+        uses: ./.github/actions/setup-compression-family
+        with:
+          deploy-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
+
       - name: Setup Swift
         uses: SwiftyLab/setup-swift@latest
         with:
@@ -72,35 +77,3 @@ jobs:
           name: jp3d-conformance-report
           path: Documentation/Compliance/JP3D_CONFORMANCE_REPORT.md
           retention-days: 90
-
-  jp3d-compliance-linux:
-    name: JP3D Part 4 Compliance Tests (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Swift
-        uses: SwiftyLab/setup-swift@latest
-        with:
-          swift-version: '6.2'
-
-      - name: Cache SPM dependencies
-        uses: actions/cache@v4
-        with:
-          path: .build
-          key: ${{ runner.os }}-spm-compliance-${{ hashFiles('Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-compliance-
-
-      - name: Print Swift version
-        run: swift --version
-
-      - name: Build J2K3D target
-        run: swift build --target J2K3D
-
-      - name: Run JP3D compliance tests
-        continue-on-error: true
-        run: swift test --filter JP3DComplianceTests
