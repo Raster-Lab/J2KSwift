@@ -259,11 +259,15 @@ final class J2KDocumentationTests: XCTestCase {
 
     // MARK: - Week 293-295: v2.0 Release Preparation
 
-    /// Verifies that getVersion() returns the current version string.
+    /// Verifies that getVersion() returns a well-formed semantic version string.
     func testVersionReturns200() throws {
         let version = getVersion()
         XCTAssertFalse(version.isEmpty, "getVersion() must return a non-empty version string")
-        XCTAssertTrue(version.hasPrefix("2."), "getVersion() must return a v2.x version string")
+        let components = version.split(separator: ".")
+        XCTAssertEqual(components.count, 3,
+                       "getVersion() must return a MAJOR.MINOR.PATCH version string: \(version)")
+        XCTAssertTrue(components.allSatisfy { Int($0) != nil },
+                      "getVersion() version components must be numeric: \(version)")
     }
 
     /// Verifies that the v2.0 release deliverables follow the expected naming convention.

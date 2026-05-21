@@ -5,6 +5,36 @@ All notable changes to J2KSwift are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> Per-release detail for v8.2 through v10.9.0 lives in
+> [`Documentation/releases/`](Documentation/releases/) as
+> `RELEASE_NOTES_vX.Y.Z.md`; this file resumes at v10.9.1.
+
+## [10.9.1] — 2026-05-21
+
+**Decoder correctness hotfix — GPU multi-tile inverse 5/3 DWT**
+
+Fixes a latent decoder defect in the GPU multi-tile per-tile inverse 5/3 DWT: `inverse2DGPUInt32` and `inverse2DCPUInt32` sized the LH/HH high-band as `height / 2` (the CPU variant also `width / 2`) instead of the canvas-anchored `height − llH` / `width − llW`, corrupting the bottom edge of sub-3-megapixel tiles at an odd tile-component canvas origin (e.g. DX 2800×2288 decoded as 2×2 tiles; observed max abs diff ≈ 9823). Latent since v10.3.0. Decoder-only; encoder and codestream bytes byte-identical to v10.9.0.
+
+### Fixed
+
+- `Sources/J2KMetal/J2KMetalDWT.swift` — `inverse2DGPUInt32` + `inverse2DCPUInt32`: high-band dimensions corrected to `height − llH` / `width − llW`. At an odd tile-component canvas origin the ISO/IEC 15444-1 band partition is uneven (LL = ⌊·/2⌋, LH/HH = ⌈·/2⌉), so `/2` under-sized the column-high buffer and dropped the final high-band row/column. The v8.3 fix (`cc33313`) patched `inverse2DInt32MultiLevelFused` + `encodeInverse2DInt32` but missed these two per-level functions; v10.3.0's `_gpuHTEntropyEnabled` routing change made the per-level path reachable. Pure Swift host-code fix; `default.metallib` unchanged.
+
+### Changed
+
+- `Sources/J2KCore/J2KCore.swift` — `getVersion()` returns `"10.9.1"`.
+- Test maintenance (test-only, no product impact): 8 stale-constant tests updated — version-string assertions made semantic-version-format-agnostic (no longer pinned to `2.0.0`); Metal shader-function count 48/43 → 72; HTJ2K performance-target constants 3×/1.5× → 10×/8×. 19 tests for de-scoped or parked features removed — lossy R-D PSNR (lossless-only since v5.38), the multi-layer encoder (a separate lossy / rate-allocation arc), GPU-forward-encode research telemetry, and weak / deadlocking research-probe tests.
+
+### Backward compatibility
+
+- Codestream bytes byte-identical to v10.9.0 — the encoder is untouched.
+- Decoder output is unchanged for every input except the previously-corrupt sub-3 MP odd-origin multi-tile GPU-decode case, which now decodes bit-exactly.
+- No public API changes.
+- Mandatory commit gate 7/7; cross-codec parity 14/14 across OpenJPEG / OpenJPH / Grok / Kakadu; `V8_3_GPUIDWTRootCauseDiagnostic` 3/3; warm cross-codec benchmark within run-to-run noise of v10.9.0 on all 38 fixtures.
+
+### SemVer rule
+
+PATCH — bug fix; no API removed, no signature changed, no codestream byte change.
+
 ## [8.1.4] — 2026-05-10
 
 **mmap'd codestream input propagated to other CLI subcommands**

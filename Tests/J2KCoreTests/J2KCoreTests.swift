@@ -45,11 +45,14 @@ final class J2KCoreTests: XCTestCase {
         XCTAssertNotNil(error5)
     }
 
-    /// Tests version string.
+    /// Tests version string is non-empty and well-formed (MAJOR.MINOR.PATCH).
     func testGetVersion() throws {
         let version = getVersion()
         XCTAssertFalse(version.isEmpty)
-        XCTAssertTrue(version.contains("2.0.0"))
+        let components = version.split(separator: ".")
+        XCTAssertEqual(components.count, 3, "Version must be MAJOR.MINOR.PATCH: \(version)")
+        XCTAssertTrue(components.allSatisfy { Int($0) != nil },
+                      "Version components must be numeric: \(version)")
     }
 
     // MARK: - J2KComponent Tests

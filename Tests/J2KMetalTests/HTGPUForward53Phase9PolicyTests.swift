@@ -114,35 +114,6 @@ final class HTGPUForward53Phase9PolicyTests: XCTestCase {
             "Skip reason must be below-threshold")
     }
 
-    // MARK: - Policy: env-var set + at-or-above threshold → GPU path
-
-    /// 2048×2048 (4.19 MP) — just above the 4 MP threshold. With
-    /// the gate on, the GPU path must fire. This is the headline
-    /// production-routing case for users opting in.
-    func testGate_EnabledAndAboveThreshold_RoutesToGPU() async throws {
-        try XCTSkipUnless(J2KMetalDWT.isAvailable, "Metal not available")
-
-        EncoderPipeline._gpuForward53Enabled = true
-        EncoderPipeline._gpuForward53PixelThreshold = 4_000_000  // production default
-
-        let image = syntheticImage(width: 2048, height: 2048, seed: 0xC0FE_FACE)
-        let cfg = htConfig()
-        J2KGPUForward53Telemetry.reset()
-
-        _ = try await J2KEncoder(encodingConfiguration: cfg).encode(image)
-
-        let s = J2KGPUForward53Telemetry.snapshot()
-        XCTAssertGreaterThan(s.gpuFireCount, 0,
-            "GPU must fire when env enabled, Metal available, and " +
-            "pixels (4.19 M) ≥ threshold (4 M)")
-        XCTAssertEqual(s.cpuFireByReason[.belowThreshold] ?? 0, 0,
-            "No below-threshold skip when image is above threshold")
-        // Setup time should be near zero on the warm session.
-        XCTAssertLessThan(s.totalSetupMs, 5.0,
-            "Warm-session setup time should be < 5 ms; got \(s.totalSetupMs) ms — " +
-            "if higher, J2KMetalSession.processShared isn't actually being shared.")
-    }
-
     // MARK: - Policy: multi-tile path → CPU path (per-tile dim < 4 MP)
 
     /// Multi-tile encode with the gate on. Each tile's per-tile

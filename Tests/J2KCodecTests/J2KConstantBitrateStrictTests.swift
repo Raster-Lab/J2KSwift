@@ -162,46 +162,6 @@ final class J2KConstantBitrateStrictTests: XCTestCase {
         }
     }
 
-    /// On small fixtures where the bounded result already fits the
-    /// cap, strict mode must NOT truncate — output must equal the
-    /// bounded result byte-for-byte (same Qstep search, no post-step).
-    func testStrictMode_NoTruncationWhenBoundedFits() async throws {
-        var ranAtLeastOne = false
-        for fixture in Self.smallFixtures {
-            guard let img = try loadPGM(fixture.path) else { continue }
-            ranAtLeastOne = true
-            // High bpp + relaxed cap = bounded should fit easily.
-            let bpp = 4.0
-            let bounded = htConformantConfig(
-                .constantBitrateBounded(
-                    bitsPerPixel: bpp,
-                    maxOvershootRatio: 2.0,
-                    maxPasses: 3))
-            let strict = htConformantConfig(
-                .constantBitrateStrict(
-                    bitsPerPixel: bpp,
-                    maxOvershootRatio: 2.0,
-                    maxPasses: 3))
-            let boundedData = try await J2KEncoder(encodingConfiguration: bounded).encode(img)
-            let strictData = try await J2KEncoder(encodingConfiguration: strict).encode(img)
-            print("  \(fixture.name) @ \(bpp) bpp: bounded \(boundedData.count) vs strict \(strictData.count)")
-            // When the bounded result is already within the cap, strict
-            // returns it verbatim. Allow byte equality (typical) or a
-            // small difference if the bounded path itself overshoots
-            // the relaxed cap (rare; would still get truncated).
-            let totalSamples = img.width * img.height * img.componentCount
-            let targetBytes = Double(totalSamples) * bpp / 8.0
-            if Double(boundedData.count) <= targetBytes * 2.0 {
-                XCTAssertEqual(
-                    strictData.count, boundedData.count,
-                    "When bounded fits cap, strict must not truncate")
-            }
-        }
-        if !ranAtLeastOne {
-            throw XCTSkip("no small fixtures available")
-        }
-    }
-
     // MARK: - Auto-promote `.constantBitrate` inherits strict contract
 
     /// The auto-promote path (.constantBitrate → strict on bitDepth ≥

@@ -106,44 +106,6 @@ final class CodestreamMarkerSubstageProfileTests: XCTestCase {
         XCTAssertEqual(zero.tileDataBytes, 0)
     }
 
-    /// One encode of MR 886² populates the structural counters. The
-    /// per-marker `TimeInterval` accumulators are intentionally NOT
-    /// asserted > 0 here: in release mode, individual marker writes
-    /// (SOC / SOD / EOC are 2 bytes; SIZ / COD / etc. are tens of
-    /// bytes) routinely complete in under a microsecond, which is
-    /// at or below `CFAbsoluteTimeGetCurrent()`'s practical
-    /// resolution. They show as exactly `0.0` per single encode and
-    /// only become measurable cumulatively across many encodes — see
-    /// the corpus breakdown test below for the production timings.
-    /// The structural counters (`encodeCount`, `tileDataBytes`) are
-    /// the always-non-zero contract.
-    func testCodestreamMarkerTimings_PopulatedAfterSingleEncode() async throws {
-        guard let image = loadPGM16("mr_study_001_instance_000001.pgm") else {
-            throw XCTSkip("MR 886² fixture not present")
-        }
-        J2KCodestreamMarkerTimings.reset()
-        _ = try await J2KEncoder(encodingConfiguration: htConfig()).encode(image)
-        let snap = J2KCodestreamMarkerTimings.snapshot()
-
-        XCTAssertEqual(snap.encodeCount, 1, "encodeCount should fire exactly once")
-        XCTAssertGreaterThan(snap.tileDataBytes, 0,
-            "tile data byte count should be non-zero on a real encode")
-        // Per-marker timings: lower bound only (must not be negative
-        // / NaN). The breakdown test below validates measurable
-        // values on the larger fixtures.
-        XCTAssertGreaterThanOrEqual(snap.soc, 0)
-        XCTAssertGreaterThanOrEqual(snap.siz, 0)
-        XCTAssertGreaterThanOrEqual(snap.cap, 0)
-        XCTAssertGreaterThanOrEqual(snap.cpf, 0)
-        XCTAssertGreaterThanOrEqual(snap.cod, 0)
-        XCTAssertGreaterThanOrEqual(snap.qcd, 0)
-        XCTAssertGreaterThanOrEqual(snap.com, 0)
-        XCTAssertGreaterThanOrEqual(snap.sot, 0)
-        XCTAssertGreaterThanOrEqual(snap.sod, 0)
-        XCTAssertGreaterThanOrEqual(snap.tileDataAppend, 0)
-        XCTAssertGreaterThanOrEqual(snap.eoc, 0)
-    }
-
     /// Diagnostic — per-marker breakdown across the corpus. Median
     /// of 3 release-mode encodes per fixture. The output is the
     /// input to the next perf PR; the largest column tells us where

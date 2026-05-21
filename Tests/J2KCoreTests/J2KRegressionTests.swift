@@ -37,7 +37,10 @@ final class J2KRegressionTests: XCTestCase {
     }
 
     func testVersionStringIsV2_0_0() throws {
-        XCTAssertTrue(getVersion().hasPrefix("2."), "Version must be a v2.x release")
+        let components = getVersion().split(separator: ".")
+        XCTAssertEqual(components.count, 3, "Version must be a MAJOR.MINOR.PATCH release")
+        XCTAssertTrue(components.allSatisfy { Int($0) != nil },
+                      "Version components must be numeric")
     }
 
     func testVersionStringIsNotEmpty() throws {

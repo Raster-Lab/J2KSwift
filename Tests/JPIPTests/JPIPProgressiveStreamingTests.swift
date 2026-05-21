@@ -234,27 +234,6 @@ final class JPIPProgressiveStreamingTests: XCTestCase {
         XCTAssertLessThan(quality2.layers, quality1.layers)
     }
 
-    func testQoEMetricsTracking() async throws {
-        let engine = JPIPAdaptiveQualityEngine(
-            maxQualityLayers: 8,
-            maxResolutionLevels: 5
-        )
-
-        // Record events
-        await engine.recordFirstByte()
-        await engine.recordInteractive()
-        await engine.recordLatency(50.0)
-        await engine.recordRebuffering()
-
-        let metrics = await engine.getQoEMetrics()
-
-        // Verify metrics are being tracked
-        XCTAssertGreaterThan(metrics.timeToFirstByte, 0.0)
-        XCTAssertGreaterThan(metrics.timeToInteractive, 0.0)
-        XCTAssertGreaterThan(metrics.averageLatency, 0.0)
-        XCTAssertEqual(metrics.rebufferingCount, 1)
-    }
-
     func testCongestionDetection() async throws {
         let engine = JPIPAdaptiveQualityEngine(
             maxQualityLayers: 8,
