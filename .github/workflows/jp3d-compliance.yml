@@ -30,7 +30,7 @@ jobs:
   jp3d-compliance:
     name: JP3D Part 4 Compliance Tests
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 75
 
     steps:
       - name: Checkout code

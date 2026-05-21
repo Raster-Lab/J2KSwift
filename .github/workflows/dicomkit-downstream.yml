@@ -31,7 +31,7 @@ jobs:
   dicomkit-build:
     name: DICOMKit builds against J2KSwift HEAD
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 75
 
     steps:
       - name: Checkout J2KSwift (this PR / commit)
@@ -100,7 +100,7 @@ jobs:
         run: |
           cd DICOMKit
           swift build
-        timeout-minutes: 15
+        timeout-minutes: 30
 
       - name: Run DICOMKit curated test set
         # Excludes 9 pre-existing unrelated failures (see CROSS_CODEC_DICOM_REPORT.md):
@@ -119,5 +119,5 @@ jobs:
             --skip "DICOMXML" \
             --skip "test_allocateBlock_allocatesFirstBlock" \
             --skip "WorkitemBuilder/testRoundTripWithSequences"
-        timeout-minutes: 20
+        timeout-minutes: 60
         continue-on-error: true

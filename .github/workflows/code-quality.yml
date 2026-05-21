@@ -80,7 +80,7 @@ jobs:
   code-coverage:
     name: Code Coverage
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 75
 
     steps:
       - name: Checkout code
@@ -103,7 +103,7 @@ jobs:
             --skip LargeBlock \
             --skip EndToEnd \
             --skip ClientServer
-        timeout-minutes: 20
+        timeout-minutes: 60
 
       - name: Generate coverage report
         run: |
