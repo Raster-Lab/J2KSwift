@@ -442,6 +442,47 @@ public struct J2KMetalDWTStatistics: Sendable {
 ///
 /// Target performance: 5-15× speedup vs Accelerate CPU for large
 /// images (>2K resolution) on Apple Silicon GPUs.
+
+/// Canvas-anchored 5/3 subband geometry for one decomposition level —
+/// the single source of truth for splitting a `width × height` band
+/// into LL/LH/HL/HH sub-band dimensions.
+///
+/// Per ISO/IEC 15444-1 F.4.4 the split depends on the tile-component
+/// **canvas origin parity**: the low-pass count is `ceil(N/2)` at an
+/// even origin and `floor(N/2)` at an odd origin; the high-pass band
+/// is always `N − low`. `N/2` alone is correct ONLY at an even origin
+/// — hand-writing `halfHH = height / 2` is exactly the mistake that
+/// shipped a latent multi-tile IDWT decode bug across v10.3.0–v10.9.0
+/// (the v8.3 fix corrected some call sites and missed others). Routing
+/// every band-dimension computation through this type makes a future
+/// fix structurally unable to miss a call site.
+private struct BandGeometry {
+    let llW: Int   // low-pass (LL/LH) band width
+    let llH: Int   // low-pass (LL/HL) band height
+    let halfWH: Int  // high-pass (HL/HH) band width  = width  − llW
+    let halfHH: Int  // high-pass (LH/HH) band height = height − llH
+
+    /// Derive the split from canvas dimensions + tile-component canvas
+    /// origin (the forward transform, and any site computing band
+    /// counts from geometry). Even origin → `ceil`; odd origin → `floor`.
+    init(width: Int, height: Int, originX: Int, originY: Int) {
+        llW = (originX & 1) == 0 ? (width  + 1) / 2 : width  / 2
+        llH = (originY & 1) == 0 ? (height + 1) / 2 : height / 2
+        halfWH = width  - llW
+        halfHH = height - llH
+    }
+
+    /// Derive the high-pass bands from canvas dimensions + already-known
+    /// low-pass dimensions (the inverse transform, where `llW`/`llH`
+    /// come from the decoded `J2KMetalDWTSubbandsInt32` structure).
+    init(width: Int, height: Int, llW: Int, llH: Int) {
+        self.llW = llW
+        self.llH = llH
+        halfWH = width  - llW
+        halfHH = height - llH
+    }
+}
+
 public actor J2KMetalDWT {
     /// Whether Metal DWT is available on this platform.
     public static var isAvailable: Bool {
@@ -824,10 +865,8 @@ public actor J2KMetalDWT {
 
         for _ in 0..<effectiveLevels {
             guard curW >= 2, curH >= 2 else { break }
-            let llW = (curW  + 1) / 2
-            let llH = (curH  + 1) / 2
-            let halfWH = curW  / 2
-            let halfHH = curH  / 2
+            let bands = BandGeometry(width: curW, height: curH, originX: 0, originY: 0)
+            let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
             let vLowBuf  = try await bufferPool.acquireBuffer(
                 device: device, size: curW * llH * stride32)
@@ -1052,10 +1091,8 @@ public actor J2KMetalDWT {
 
             // Parity-aware band counts per F.4.4: low-pass count is
             // ceil for even origin, floor for odd; high = total - low.
-            let llW = ((curOX & 1) == 0) ? (curW + 1) / 2 : curW / 2
-            let llH = ((curOY & 1) == 0) ? (curH + 1) / 2 : curH / 2
-            let halfWH = curW - llW
-            let halfHH = curH - llH
+            let bands = BandGeometry(width: curW, height: curH, originX: curOX, originY: curOY)
+            let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
             let vLowBuf  = try await bufferPool.acquireBuffer(
                 device: device, size: curW * llH * stride32)
@@ -1274,10 +1311,8 @@ public actor J2KMetalDWT {
         for _ in 0..<effectiveLevels {
             guard curW >= 2, curH >= 2 else { break }
 
-            let llW = ((curOX & 1) == 0) ? (curW + 1) / 2 : curW / 2
-            let llH = ((curOY & 1) == 0) ? (curH + 1) / 2 : curH / 2
-            let halfWH = curW - llW
-            let halfHH = curH - llH
+            let bands = BandGeometry(width: curW, height: curH, originX: curOX, originY: curOY)
+            let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
             let vLowBuf  = try await bufferPool.acquireBuffer(
                 device: device, size: curW * llH * stride32)
@@ -3560,15 +3595,13 @@ public actor J2KMetalDWT {
 
         let width = subbands.originalWidth
         let height = subbands.originalHeight
-        let llW = subbands.llWidth
-        let llH = subbands.llHeight
-        _ = (llW, width / 2)  // captured for clarity; halfWH unused at this layer
-        // High-band height is H − llH (canvas-anchored), not H/2: at an
-        // odd tile-component canvas Y origin the spec partition is uneven
-        // (LL = floor(H/2), LH/HH = ceil(H/2)), so H/2 under-sizes
-        // colHighBuffer by one row. Mirrors the v8.3 fix on
-        // `inverse2DInt32MultiLevelFused`; this call site was missed by it.
-        let halfHH = height - llH
+        // Canvas-anchored band geometry — see `BandGeometry`. The
+        // horizontal pass derives its own widths, so only the heights
+        // are consumed here; `halfHH = height − llH`, never `height / 2`.
+        let bands = BandGeometry(width: width, height: height,
+                                 llW: subbands.llWidth, llH: subbands.llHeight)
+        let llH = bands.llH
+        let halfHH = bands.halfHH
 
         func makeBuffer(size: Int) throws -> any MTLBuffer {
             guard let buffer = device.makeBuffer(
@@ -4285,15 +4318,12 @@ public actor J2KMetalDWT {
         // based on band canvas origin parity.
         let width = subbands.originalWidth
         let height = subbands.originalHeight
-        let llW = subbands.llWidth
-        let llH = subbands.llHeight
-        // Canvas-anchored high-band dims (H − llH, W − llW), not H/2 / W/2:
-        // at an odd tile-component canvas origin the spec partition is
-        // uneven, so H/2 / W/2 drop the final LH/HH row / HL/HH column.
-        // Mirrors the v8.3 `inverse2DInt32MultiLevelFused` fix; this
-        // per-level call site was missed by it.
-        let halfHH = height - llH
-        let halfWH = width - llW
+        // Canvas-anchored band geometry — see `BandGeometry`. `halfHH`
+        // / `halfWH` are `N − ll`, never `N / 2` (that mistake shipped
+        // the v10.3.0–v10.9.0 multi-tile IDWT decode bug).
+        let bands = BandGeometry(width: width, height: height,
+                                 llW: subbands.llWidth, llH: subbands.llHeight)
+        let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
         let hOddOrigin = (subbands.tileOriginX & 1) == 1
         let vOddOrigin = (subbands.tileOriginY & 1) == 1
 
@@ -4400,10 +4430,8 @@ public actor J2KMetalDWT {
     /// horizontal, matching the encoder's spec order. Sequencing is
     /// the inverse (mirror) of `inverse2DCPUInt32`.
     private func forward2DCPUInt32(image: [Int32], width: Int, height: Int) -> J2KMetalDWTSubbandsInt32 {
-        let llW = (width  + 1) / 2
-        let llH = (height + 1) / 2
-        let halfWH = width  / 2
-        let halfHH = height / 2
+        let bands = BandGeometry(width: width, height: height, originX: 0, originY: 0)
+        let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
         // Step 1 (vertical forward on columns): each column → low + high rows.
         var vLow  = [Int32](repeating: 0, count: width * llH)
@@ -4452,10 +4480,8 @@ public actor J2KMetalDWT {
         let queue = try await metalDevice.commandQueue()
         let device = queue.device
 
-        let llW = (width  + 1) / 2
-        let llH = (height + 1) / 2
-        let halfWH = width  / 2
-        let halfHH = height / 2
+        let bands = BandGeometry(width: width, height: height, originX: 0, originY: 0)
+        let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
         func makeBuffer(size: Int) throws -> any MTLBuffer {
             guard let buffer = device.makeBuffer(
@@ -4603,10 +4629,8 @@ public actor J2KMetalDWT {
             return forward2DCPUInt32(image: image, width: width, height: height)
         }
 
-        let llW = ((uX & 1) == 0) ? (width  + 1) / 2 : width  / 2
-        let llH = ((uY & 1) == 0) ? (height + 1) / 2 : height / 2
-        let halfWH = width  - llW   // hl / hh band width
-        let halfHH = height - llH   // lh / hh band height
+        let bands = BandGeometry(width: width, height: height, originX: uX, originY: uY)
+        let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
         // Step 1 (vertical forward) — pick parity per uY.
         let yOdd = (uY & 1) == 1
@@ -4667,10 +4691,8 @@ public actor J2KMetalDWT {
         let device = queue.device
         let stride32 = MemoryLayout<Int32>.stride
 
-        let llW = ((uX & 1) == 0) ? (width  + 1) / 2 : width  / 2
-        let llH = ((uY & 1) == 0) ? (height + 1) / 2 : height / 2
-        let halfWH = width  - llW
-        let halfHH = height - llH
+        let bands = BandGeometry(width: width, height: height, originX: uX, originY: uY)
+        let llW = bands.llW, llH = bands.llH, halfWH = bands.halfWH, halfHH = bands.halfHH
 
         func makeBuffer(size: Int) throws -> any MTLBuffer {
             guard let buffer = device.makeBuffer(
