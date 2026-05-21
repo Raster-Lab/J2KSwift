@@ -1,7 +1,7 @@
 # v10.16-research — GPU decode underperformance (#440)
 
 **Branch:** `v10.16-research`
-**Status:** Phase 0–3 complete — Lever 1 WASH; #440 confirmed structural on M2
+**Status:** Phase 0–3 complete — Levers 1 & 2 WASH; #440 confirmed structural on M2
 **Date:** 2026-05-21
 **Issue:** [#440](https://github.com/Raster-Lab/J2KSwift/issues/440) — `decodeGPU` / `decodeWithGPUHT` underperform CPU `decode()` and Kakadu on mid/large medical images.
 
@@ -73,7 +73,9 @@ over-count wall — read them as relative weight):
 Entropy and iDWT are **co-dominant** on lossless (≈ 50/50 on DX) — there
 is no single wedge to optimise.
 
-## Phase 2 — Lever 1: multi-level-fused IDWT for `decodeGPU`
+## Phase 2 — optimisation levers
+
+### Lever 1 — multi-level-fused IDWT for `decodeGPU`
 
 `decodeGPU` runs the inverse DWT through the **per-level** dispatch
 (`J2KMetalDWT.inverse2DInt32` called once per decomposition level; each
@@ -107,20 +109,43 @@ original. The fused path is correct (not bit-rotted).
 | px_001 | 3.24 M | 27.4 | 27.8 | +0.4 |
 | dx_002 | 6.4 M | 47.8 | 48.1 | +0.4 |
 
-**Verdict: WASH.** Δ ≤ 0.4 ms on the ≥3 MP target band — an order of
-magnitude under the 3 ms acceptance gate. The −1.1 ms on the 262 K CT
-fixtures is real but far below threshold and irrelevant to #440's
-mid/large target. Command-buffer round-trips are not the GPU IDWT
-bottleneck; the kernel compute itself is, and it is already at parity
-with the CPU NEON path.
+**Verdict: WASH.** Δ ≤ 0.4 ms on the ≥3 MP target band (≤ 1.3 ms in a
+confirming second run) — an order of magnitude under the 3 ms
+acceptance gate. The −0.6…−1.3 ms on the 262 K CT fixtures is real but
+far below threshold and irrelevant to #440's mid/large target.
+Command-buffer round-trips are not the GPU IDWT bottleneck.
+
+### Lever 2 — fused-H+V kernel threshold
+
+The per-level IDWT picks the single-dispatch fused H+V inverse-5/3
+kernel (`encodeInverse2DInt32_Fused`) only when a level's output pixel
+count is ≥ `inverse53IntFusedPixelThreshold` (12 MP, set by a v10.5
+`decodeWithGPUHT` variance bench). No DX/PX decomposition level reaches
+12 MP, so they always run the tiled H + tiled V pair. **Lever 2** lowers
+the threshold to 3 MP so the ≥3 MP fixtures' largest level uses the
+fused kernel — re-tested end-to-end on `decodeGPU`
+(`testLever2FusedKernelThreshold`):
+
+| Fixture | px | thr 12 MP | thr 3 MP | Δ ms | parity |
+|---|---:|---:|---:|---:|---:|
+| mr_001 | 785 K | 5.5 | 5.4 | −0.1 | bit-exact |
+| xa_001 | 1.05 M | 7.3 | 7.8 | +0.5 | bit-exact |
+| px_001 | 3.24 M | 27.1 | 27.3 | +0.2 | bit-exact |
+| dx_002 | 6.4 M | 49.5 | 49.8 | +0.3 | bit-exact |
+
+**Verdict: WASH.** Δ −0.1…+0.5 ms, bit-exact. Confirms the v10.5 12 MP
+threshold — the fused H+V kernel is not faster than the tiled pair
+below 12 MP.
 
 ## Phase 3 — conclusion
 
 **#440's GPU-decode underperformance is structural on Apple M2.**
 
-- The inverse DWT is at CPU/GPU parity on lossless; fusing its dispatch
-  (Lever 1) washes. This is the **13th independent lever-ceiling
-  confirmation** on M2 + Swift release.
+- The inverse DWT is at CPU/GPU parity on lossless; **two independent
+  dispatch-fusion levers wash** — Lever 1 (fusion across decomposition
+  levels) and Lever 2 (fused H+V kernel within a level). Both bit-exact.
+  This is the **13th independent lever-ceiling confirmation** on M2 +
+  Swift release.
 - `decodeWithGPUHT` is unusable on lossless (2.7–4.6× slower) — GPU HT
   entropy collapses on large codestreams. The auto-router already
   excludes it; no change needed.
@@ -142,7 +167,7 @@ opt-in rather than deleted.
   behaviour byte-identical to v10.9.3. Retained for M3/M4/A-series
   re-evaluation.
 - `Tests/J2KMetalTests/V10_16_GPUDecodeFusedIDWTTests.swift` — parity
-  (bit-exact) + warm A/B diagnostic.
+  (bit-exact) + Lever 1 warm A/B + Lever 2 fused-threshold A/B.
 - This finding doc.
 
 No `main` merge — research-branch deliverable per the research-branch

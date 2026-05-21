@@ -19,6 +19,7 @@
 import XCTest
 import Foundation
 import J2KCore
+import J2KMetal
 @testable import J2KCodec
 
 final class V10_16_GPUDecodeFusedIDWTTests: XCTestCase {
@@ -179,6 +180,54 @@ final class V10_16_GPUDecodeFusedIDWTTests: XCTestCase {
                          f, px, cpu, gpuOff, gpuOn, delta, ht))
         }
         print("=== end V10_16 Lever 1 A/B ===")
+        print("")
+    }
+
+    // MARK: - Test 3 — Lever 2: fused-H+V kernel threshold
+
+    /// Lever 2 — lower `inverse53IntFusedPixelThreshold` so the ≥3 MP
+    /// fixtures' largest decomposition level uses the single-dispatch
+    /// fused H+V inverse-5/3 kernel instead of the tiled H + tiled V
+    /// pair. v10.5 set the threshold to 12 MP from a `decodeWithGPUHT`
+    /// variance bench; this re-tests it end-to-end on `decodeGPU`.
+    func testLever2FusedKernelThreshold() async throws {
+        try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal unavailable")
+        let savedThreshold = J2KMetalDWT.inverse53IntFusedPixelThreshold
+        defer { J2KMetalDWT.inverse53IntFusedPixelThreshold = savedThreshold }
+
+        let session = J2KMetalSession()
+        await J2KDecoder.preWarm(includeWarmupDispatch: true)
+
+        print("")
+        print("=== V10_16 Lever 2 A/B — fused-H+V kernel threshold, decodeGPU, lossless ===")
+        print("| Fixture | px | thr=12 MP ms | thr=3 MP ms | Δ ms | parity |")
+        print("|---|---:|---:|---:|---:|---:|")
+
+        for f in Self.fixtures {
+            guard let img = loadPGM16(f) else { continue }
+            let px = img.width * img.height
+            let cs = try await losslessEncode(img)
+
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = 12_000_000
+            let hi = try await measure {
+                _ = try await J2KDecoder().decodeGPU(cs, session: session)
+            }
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = 3_000_000
+            let lo = try await measure {
+                _ = try await J2KDecoder().decodeGPU(cs, session: session)
+            }
+
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = 12_000_000
+            let refHi = try await J2KDecoder().decodeGPU(cs)
+            J2KMetalDWT.inverse53IntFusedPixelThreshold = 3_000_000
+            let refLo = try await J2KDecoder().decodeGPU(cs)
+            let parity = imagesEqual(refHi, refLo)
+            XCTAssertTrue(parity, "\(f): Lever 2 (fused threshold) changed output")
+
+            print(String(format: "| %@ | %d | %.1f | %.1f | %+.1f | %@ |",
+                         f, px, hi, lo, lo - hi, parity ? "ok" : "FAIL"))
+        }
+        print("=== end V10_16 Lever 2 A/B ===")
         print("")
     }
 }
