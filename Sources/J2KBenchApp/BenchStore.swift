@@ -93,18 +93,28 @@ final class BenchStore: ObservableObject {
         guard !selected.isEmpty else { return nil }
 
         // Per-direction fixture map: { id: { label, modality, fixture,
-        // source, results: { codec: timing } } }.
-        func directionMap(_ pick: (FixtureResult) -> TimingSamples) -> [String: Any] {
+        // source, results: { codec: timing } } }. `codecs` lets the
+        // decode direction carry the CPU, GPU and GPU-HT lanes side by
+        // side, so the cross-silicon harness can read the CPU↔GPU
+        // crossover (V10_17_CROSS_SILICON_HARNESS.md) directly.
+        func directionMap(
+            _ codecs: [(name: String, pick: (FixtureResult) -> TimingSamples)]
+        ) -> [String: Any] {
             var map: [String: Any] = [:]
             for r in selected {
-                let timing = pick(r)
-                guard !timing.isEmpty else { continue }
+                var results: [String: Any] = [:]
+                for codec in codecs {
+                    let timing = codec.pick(r)
+                    guard !timing.isEmpty else { continue }
+                    results[codec.name] = timingDict(timing)
+                }
+                guard !results.isEmpty else { continue }
                 map[r.fixture] = [
                     "label": r.label,
                     "modality": r.modality,
                     "fixture": r.fixture,
                     "source": "synthetic",
-                    "results": ["J2KSwift+inproc": timingDict(timing)]
+                    "results": results
                 ] as [String: Any]
             }
             return map
@@ -123,11 +133,19 @@ final class BenchStore: ObservableObject {
             "lane": "inproc",
             "runs": run.runs,
             "warmups": run.warmups,
-            "encode": directionMap { $0.encode },
-            // Decode column = `.cpu` lane, i.e. `J2KDecoder.decode()` —
-            // the production router path the macOS `--in-proc` lane also
-            // measures, keeping the cross-host comparison apples-to-apples.
-            "decode": directionMap { $0.decodeCPU }
+            "encode": directionMap([
+                (name: "J2KSwift+inproc", pick: { $0.encode })
+            ]),
+            // Three decode lanes side by side:
+            //   J2KSwift+inproc = `decode()` production router (the
+            //     apples-to-apples column vs the macOS `--in-proc` lane)
+            //   J2KSwift+gpu    = `decodeGPU()`        — GPU IDWT, CPU HT
+            //   J2KSwift+gpuht  = `decodeWithGPUHT()`  — GPU IDWT + GPU HT
+            "decode": directionMap([
+                (name: "J2KSwift+inproc", pick: { $0.decodeCPU }),
+                (name: "J2KSwift+gpu", pick: { $0.decodeGPU }),
+                (name: "J2KSwift+gpuht", pick: { $0.decodeWithGPUHT })
+            ])
         ]
         return try? JSONSerialization.data(
             withJSONObject: payload,
