@@ -1,8 +1,9 @@
 # v10.17-research — GPU HT entropy decode redesign (#440)
 
 **Branch:** `v10.17-research`
-**Status:** Phase 0–2 complete (bottleneck root-caused; host-side levers
-fail); Phase 3 = redesign design for a multi-week implementation arc
+**Status:** CLOSED — host-side levers fail (Phase 0–2); the Phase 3
+warp-cooperative redesign is **structurally blocked** (implementation
+investigation). #440 re-classified as algorithm-level structural.
 **Date:** 2026-05-22
 **Issue:** [#440](https://github.com/Raster-Lab/J2KSwift/issues/440)
 
@@ -143,25 +144,73 @@ the heavy MagSgn extraction now **O((H/2)·(W/4)/32)** parallel.
 - **Occupancy** — 32 lanes/block raises threadgroup-memory pressure;
   needs tuning so enough warps stay resident.
 
-### Estimated payoff
+### Implementation finding — the redesign is structurally blocked
 
-The serial MagSgn read is ≈ half the per-thread work; parallelising it
-32-way and removing the one-slow-thread-stalls-the-warp effect could
-move GPU HT from 0.06–0.48× CPU toward parity. It is the only design
-that attacks the actual bottleneck — but it is a genuine multi-week
-kernel rewrite, not a tuning lever.
+The implementation began by reading the actual cleanup-pass kernel
+(`htDecodeInitialRow` / `htDecodeSubsequentRow` and helpers in
+`J2KShaders.metal`). The warp-cooperative design above assumes a row
+decodes as *VLC-serial → MagSgn-parallel*. The MagSgn half does **not**
+parallelise on subsequent rows:
+
+- `htReadQuadSamples` reads `m = Uq − eBit` bits per significant sample
+  — per-sample widths are known once `Uq` is known. ✓
+- **But `Uq` is not known from the VLC pass alone.**
+  `htDecodeSubsequentRow` computes `Uq = u + kappa`, with
+  `kappa = popcount(rho) ≥ 2 ? max(1, maxE) : 1`. `maxE` is recomputed
+  *every quad-pair* from `eVal`, which `htRecoverEQ` fills from the
+  **decoded MagSgn coefficients of the previous quad in the same row**.
+
+So for every quad with ≥ 2 significant samples, `Uq` — hence the MagSgn
+bit-offset of the next quad — depends on the previous quad's fully
+decoded magnitudes. Subsequent-row quads form a **serial chain through
+decoded MagSgn values**. That is exactly the dense-block case #440 is
+about; sparse blocks (kappa ≡ 1) parallelise but are already fast.
+
+The genuinely-parallel structure that remains:
+
+| axis | parallelism | note |
+|---|---|---|
+| across code-blocks | high | already exploited — 1 thread/block |
+| MEL+VLC stream vs MagSgn stream | 2× | producer/consumer pipeline |
+| the 4 samples of one quad | 4× | only after that quad's `Uq` is known |
+| across quads of a dense row | **none** | blocked by the `maxE`/`kappa` chain |
+
+Best case ≈ 2× × 4×, realised through threadgroup memory + a barrier
+per quad (~512 barriers for a 64×64 block) whose overhead would consume
+most of the theoretical gain. The warp-cooperative redesign cannot
+deliver a clear GPU win on the dense/large blocks that matter.
 
 ## Conclusion
 
 - The GPU HT entropy bottleneck is **one-thread-per-block serial
   bitstream parsing**, confirmed and root-caused.
-- **Two host-side load-balancing levers both regress** (bit-exact) —
+- **Two host-side load-balancing levers both regress**, bit-exact —
   cost-sorting unbalances threadgroup scheduling more than it helps
-  warp divergence. No host-side lever closes #440. This is the
-  **14th lever-ceiling-class confirmation** on M2.
-- The only real fix is the **warp-cooperative per-block redesign**
-  designed above — scoped here as the entry point for a dedicated
-  multi-week implementation arc.
+  warp divergence.
+- **The warp-cooperative redesign is structurally blocked** — the HT
+  cleanup pass's `maxE`/`kappa` propagation serialises dense-row quads
+  through decoded MagSgn values. Within-block parallelism is capped at
+  ~2–4× and is not barrier-overhead-viable.
+
+**#440 is structural at the algorithm level, not merely the M2
+hardware level.** The HT cleanup pass is a serial per-block algorithm;
+GPU threads run serial branchy code slowly; there is no within-block
+parallelism to recover in the dense case. No multi-week GPU rewrite
+changes this. **Recommendation: do not pursue the warp-cooperative
+implementation.** Production decode already uses the CPU C+NEON HT
+path; `decodeWithGPUHT` should remain out of auto-routing on M2.
+
+Remaining honest options for #440:
+- **Cross-silicon re-evaluation** — M3/M4/A-series GPU cores run serial
+  threads faster; the CPU/GPU crossover may differ. Cheapest
+  informative next step — needs device readings, not code.
+- **Kernel micro-optimisation** — lower register pressure for occupancy,
+  faster bit-readers. ~1.2–1.5× at best; still short of the 2.7–4.6×
+  CPU gap. Low priority.
+
+#440 should be **re-classified from "optimisation target" to
+"structural — the GPU is the wrong machine for HT cleanup decode on
+M2; the CPU C+NEON path is the production answer."**
 
 ## Deliverables
 
@@ -172,6 +221,7 @@ kernel rewrite, not a tuning lever.
   A/B diagnostic.
 - This finding + redesign-design doc.
 
-`#440` stays open; the warp-cooperative redesign is the recommended
-next arc if GPU HT decode is to become competitive on M2. Research
-branch — no `main` merge.
+`#440` stays open but should be re-labelled **structural** — the
+warp-cooperative redesign is *not* a recommended arc (the algorithm
+resists it). Cross-silicon re-evaluation is the only cheap informative
+next step. Research branch — no `main` merge.
