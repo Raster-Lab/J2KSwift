@@ -91,6 +91,63 @@ def direction_table(direction: str, runs: list[tuple[str, dict]]) -> list[str]:
     return lines
 
 
+def j2kswift_decode_codecs(run: dict) -> list[str]:
+    """All J2KSwift codec keys present in this run's decode results,
+    in display order (inproc, gpu, gpuht, then any others)."""
+    seen: list[str] = []
+    for entry in run.get("decode", {}).values():
+        for key in entry.get("results", {}):
+            if key.startswith("J2KSwift") and key not in seen:
+                seen.append(key)
+    order = {"J2KSwift+inproc": 0, "J2KSwift+gpu": 1, "J2KSwift+gpuht": 2}
+    return sorted(seen, key=lambda k: (order.get(k, 9), k))
+
+
+# Human labels for the decode lanes.
+_LANE = {"J2KSwift+inproc": "decode()",
+         "J2KSwift+gpu": "decodeGPU",
+         "J2KSwift+gpuht": "decodeWithGPUHT"}
+
+
+def crossover_section(runs: list[tuple[str, dict]]) -> list[str]:
+    """Per-host CPU↔GPU decode crossover — the v10.17 question. A GPU
+    column below `decode()` means GPU decode wins on that silicon."""
+    lines = ["## CPU ↔ GPU decode crossover (per host)", "",
+             "_`decode()` vs `decodeGPU()` vs `decodeWithGPUHT()`. A GPU "
+             "column below `decode()` means GPU decode beats CPU on that "
+             "silicon — which would re-open V10_17 for that hardware._", ""]
+    any_host = False
+    for _, run in runs:
+        codecs = j2kswift_decode_codecs(run)
+        if len(codecs) < 2:
+            continue
+        any_host = True
+        per_codec = {c: medians(run, "decode", c) for c in codecs}
+        common = set(per_codec[codecs[0]])
+        for c in codecs[1:]:
+            common &= set(per_codec[c])
+        ordered = [f for f in run.get("decode", {}) if f in common]
+
+        lines.append(f"### {host_label(run)}")
+        lines.append("")
+        header = ["Fixture"] + [f"{_LANE.get(c, c)} ms" for c in codecs] + ["fastest"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for fixture in ordered:
+            vals = [per_codec[c][fixture] for c in codecs]
+            best = min(range(len(codecs)), key=lambda i: vals[i])
+            row = ([fixture] + [f"{v:.2f}" for v in vals]
+                   + [_LANE.get(codecs[best], codecs[best])])
+            lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+    if not any_host:
+        lines.append("_(no host JSON carries the decodeGPU / decodeWithGPUHT "
+                      "columns — needs a J2KBenchApp build at or past the "
+                      "v10.5-research export change.)_")
+        lines.append("")
+    return lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("json", nargs="*", help="host JSON files")
@@ -133,6 +190,7 @@ def main() -> None:
 
     for direction in ("decode", "encode"):
         lines += direction_table(direction, runs)
+    lines += crossover_section(runs)
 
     report = "\n".join(lines)
     if args.output:

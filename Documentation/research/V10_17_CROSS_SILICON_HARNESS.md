@@ -74,28 +74,28 @@ On M2: `decodeGPU` ≈ CPU; `decodeWithGPUHT` is 2.7–4.6× **slower**. A
 newer device "moves the crossover" if its `decodeGPU` or
 `decodeWithGPUHT` column drops **below** its CPU column.
 
-## Known gap — the GPU columns
+## The GPU columns
 
-J2KBenchApp's **"Share Selected" export carries only the `.cpu` decode**
-(`J2KSwift+inproc` = `J2KDecoder.decode()`), so a device JSON answers
-question 1 (positioning) but **not** question 2 (the GPU crossover) on
-its own. The app *does* measure and display `decodeGPU` /
-`decodeWithGPUHT` per fixture on its detail screen — until the export
-is extended, read the GPU-vs-CPU crossover off the device screen.
+J2KBenchApp's "Share Selected" export carries all three decode lanes
+per fixture — `J2KSwift+inproc` (`decode()`), `J2KSwift+gpu`
+(`decodeGPU()`) and `J2KSwift+gpuht` (`decodeWithGPUHT()`) — landed on
+`v10.5-research` (`BenchStore.exportData`, commit `9f1f139`).
+`cross_silicon_compare.py` reads them and emits a per-host
+**CPU ↔ GPU decode crossover** table, so a single device JSON answers
+both questions above on its own.
 
-**Follow-up (small, on `v10.5-research`):** add `J2KSwift+gpu` and
-`J2KSwift+gpuht` codec entries to the `decode` direction of
-`BenchStore.exportData`. Then `cross_silicon_compare.py` reports the
-crossover directly. Scoped but not done here — it is a J2KBenchApp
-change and this harness lives on `v10.17-research`.
+Device JSONs must come from a J2KBenchApp build at or past `9f1f139`.
+Older JSONs and the macOS `cross_codec_warm_bench.py` baselines carry
+only `J2KSwift+inproc`; the harness still produces the positioning
+tables for them and notes the crossover table is unavailable.
 
 ## What to look for
 
 - **Decode positioning** — A18 Pro / M4 decode wall vs M2; expect
   monotonic improvement with silicon generation.
-- **GPU crossover** — any device where `decodeGPU` < `decode()` or
-  `decodeWithGPUHT` < `decode()`. If found, that silicon class warrants
-  a `recommendedDecodeAPI` re-calibration and re-opens the V10_17
-  question for that hardware.
+- **GPU crossover** — the per-host *CPU ↔ GPU decode crossover* table.
+  Any device where `decodeGPU` or `decodeWithGPUHT` comes in below
+  `decode()` warrants a `recommendedDecodeAPI` re-calibration for that
+  silicon class and re-opens the V10_17 question for that hardware.
 - **Encode** — secondary; encode is CPU-only, so it is a pure
   CPU-core-speed scaling check.
