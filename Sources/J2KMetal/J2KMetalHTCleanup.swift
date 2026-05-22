@@ -78,6 +78,70 @@ public struct J2KMetalHTCleanup: Sendable {
         public let totalSamples: Int
     }
 
+    // MARK: - v10.17-research — issue #440 GPU HT entropy redesign
+
+    /// Lever A — reorder per-codeblock descriptors by descending
+    /// codestream length before dispatch, so each 32-lane SIMD warp
+    /// decodes blocks of similar entropy depth. The one-thread-per-block
+    /// cleanup kernel makes a warp run at the speed of its slowest lane;
+    /// grouping similar-cost blocks cuts that intra-warp divergence
+    /// stall.
+    ///
+    /// **Lever A-prime** — a plain descriptor reorder regressed every
+    /// fixture (v10.17 A/B): adjacent descriptors index adjacent
+    /// regions of the codestream pool, so reordering scatters each
+    /// warp's pool reads and thrashes the cache. A-prime therefore
+    /// repacks the codestream pool into the sorted order too, rewriting
+    /// the per-block offsets — preserving the warp-contiguous read
+    /// pattern while still cost-sorting the blocks. Each descriptor
+    /// carries its own `outputOffset`, so the output is bit-identical.
+    /// Env `J2K_GPU_HT_SORT`, default OFF for the A/B.
+    nonisolated(unsafe) public static var divergenceSortEnabled: Bool = {
+        if let v = ProcessInfo.processInfo.environment["J2K_GPU_HT_SORT"] {
+            return v == "1" || v.lowercased() == "true" || v.lowercased() == "yes"
+        }
+        return false
+    }()
+
+    /// Descending-cost descriptor sort + matching codestream-pool
+    /// repack. `magsgnLength + melVlcLength` is the per-block codestream
+    /// byte count — a proxy for the serial bit-parsing depth of the
+    /// thread that decodes that block.
+    static func maybeSortForDivergence(
+        _ descriptors: [J2KMetalHTCleanupBlockDescriptor],
+        pool: [UInt8]
+    ) -> (descriptors: [J2KMetalHTCleanupBlockDescriptor], pool: [UInt8]) {
+        guard divergenceSortEnabled, descriptors.count > 32 else {
+            return (descriptors, pool)
+        }
+        let order = descriptors.indices.sorted {
+            (UInt64(descriptors[$0].magsgnLength) + UInt64(descriptors[$0].melVlcLength))
+                > (UInt64(descriptors[$1].magsgnLength) + UInt64(descriptors[$1].melVlcLength))
+        }
+        var newPool = [UInt8]()
+        newPool.reserveCapacity(pool.count)
+        var newDescriptors: [J2KMetalHTCleanupBlockDescriptor] = []
+        newDescriptors.reserveCapacity(descriptors.count)
+        for idx in order {
+            let d = descriptors[idx]
+            let ms = Int(d.magsgnOffset), msl = Int(d.magsgnLength)
+            let mv = Int(d.melVlcOffset), mvl = Int(d.melVlcLength)
+            guard ms + msl <= pool.count, mv + mvl <= pool.count else {
+                return (descriptors, pool)   // malformed — leave untouched
+            }
+            let newMs = UInt32(newPool.count)
+            newPool.append(contentsOf: pool[ms..<ms + msl])
+            let newMv = UInt32(newPool.count)
+            newPool.append(contentsOf: pool[mv..<mv + mvl])
+            newDescriptors.append(J2KMetalHTCleanupBlockDescriptor(
+                magsgnOffset: newMs, magsgnLength: d.magsgnLength,
+                melVlcOffset: newMv, melVlcLength: d.melVlcLength,
+                outputOffset: d.outputOffset, width: d.width,
+                height: d.height, missingMSBs: d.missingMSBs))
+        }
+        return (newDescriptors, newPool)
+    }
+
     #if canImport(Metal)
     /// Run the cleanup-pass decoder over `descriptors`. Returns one
     /// UInt32 per output sample in OpenJPH sign-magnitude convention
@@ -93,6 +157,10 @@ public struct J2KMetalHTCleanup: Sendable {
     ) async throws -> (output: [UInt32], stats: Statistics) {
         precondition(vlcTable0.count == 1024, "vlcTable0 must have 1024 entries")
         precondition(vlcTable1.count == 1024, "vlcTable1 must have 1024 entries")
+
+        // v10.17-research Lever A-prime — divergence sort + pool repack.
+        let (descriptors, codestreamPool) =
+            Self.maybeSortForDivergence(descriptors, pool: codestreamPool)
 
         try await metalDevice.initialize()
         let queue = try await metalDevice.commandQueue()
@@ -230,6 +298,10 @@ public struct J2KMetalHTCleanup: Sendable {
     ) async throws -> (output: [Int32], stats: Statistics) {
         precondition(vlcTable0.count == 1024, "vlcTable0 must have 1024 entries")
         precondition(vlcTable1.count == 1024, "vlcTable1 must have 1024 entries")
+
+        // v10.17-research Lever A-prime — divergence sort + pool repack.
+        let (descriptors, codestreamPool) =
+            Self.maybeSortForDivergence(descriptors, pool: codestreamPool)
 
         try await metalDevice.initialize()
         let queue = try await metalDevice.commandQueue()
@@ -386,6 +458,10 @@ public struct J2KMetalHTCleanup: Sendable {
     ) {
         precondition(vlcTable0.count == 1024, "vlcTable0 must have 1024 entries")
         precondition(vlcTable1.count == 1024, "vlcTable1 must have 1024 entries")
+
+        // v10.17-research Lever A-prime — divergence sort + pool repack.
+        let (descriptors, codestreamPool) =
+            Self.maybeSortForDivergence(descriptors, pool: codestreamPool)
 
         try await metalDevice.initialize()
         let queue = try await metalDevice.commandQueue()
