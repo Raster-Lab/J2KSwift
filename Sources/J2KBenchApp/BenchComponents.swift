@@ -135,6 +135,15 @@ struct FixtureRow: View {
 
 // MARK: - Share sheet bridge
 
+/// Identifiable wrapper so the share sheet is driven by `.sheet(item:)`.
+/// `.sheet(isPresented:)` whose content reads a *separate* `@State URL?`
+/// races — the content closure is evaluated while the URL is still nil,
+/// presenting an empty sheet (the "share does nothing" bug).
+struct ShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 #if os(iOS)
 import UIKit
 

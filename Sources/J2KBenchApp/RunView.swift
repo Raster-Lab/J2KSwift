@@ -15,8 +15,7 @@ struct RunView: View {
 
     @State private var isRunning = false
     @State private var completedRun: BenchRun?
-    @State private var exportURL: URL?
-    @State private var showShareSheet = false
+    @State private var shareItem: ShareItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,8 +30,8 @@ struct RunView: View {
         .navigationTitle("New Benchmark")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showShareSheet) {
-            if let url = exportURL { ShareSheet(activityItems: [url]) }
+        .sheet(item: $shareItem) { item in
+            ShareSheet(activityItems: [item.url])
         }
         #endif
     }
@@ -176,9 +175,6 @@ struct RunView: View {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(store.exportFilename(for: run))
         try? data.write(to: url, options: .atomic)
-        exportURL = url
-        #if os(iOS)
-        showShareSheet = true
-        #endif
+        shareItem = ShareItem(url: url)
     }
 }

@@ -120,8 +120,7 @@ struct RunDetailView: View {
     let run: BenchRun
 
     @State private var shareSelection: Set<String>
-    @State private var exportURL: URL?
-    @State private var showShareSheet = false
+    @State private var shareItem: ShareItem?
     @EnvironmentObject private var store: BenchStore
 
     init(run: BenchRun) {
@@ -142,8 +141,8 @@ struct RunDetailView: View {
         .navigationTitle(run.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showShareSheet) {
-            if let url = exportURL { ShareSheet(activityItems: [url]) }
+        .sheet(item: $shareItem) { item in
+            ShareSheet(activityItems: [item.url])
         }
         #endif
     }
@@ -247,9 +246,6 @@ struct RunDetailView: View {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(store.exportFilename(for: run))
         try? data.write(to: url, options: .atomic)
-        exportURL = url
-        #if os(iOS)
-        showShareSheet = true
-        #endif
+        shareItem = ShareItem(url: url)
     }
 }
