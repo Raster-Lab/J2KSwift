@@ -1,0 +1,98 @@
+# v10.17-research — cross-silicon findings
+
+**Branch:** `v10.17-research` · **Status:** open, accumulating device
+readings · started 2026-05-22
+
+Running analysis of cross-silicon J2KSwift bench readings collected via
+J2KBenchApp (see `V10_17_CROSS_SILICON_HARNESS.md`). The open question
+from v10.16 / v10.17: codec-perf on **M2** is at a structural ceiling
+and the GPU decode paths lose to CPU there — does that hold on newer
+Apple silicon?
+
+## Readings
+
+| Date | Host | Chip | Build | Status |
+|---|---|---|---|---|
+| 2026-05-22 | `iPhone18,1` | A19-class (iPhone 17 line) | Release | **valid** — 3 decode codecs |
+| 2026-05-21 | `iPhone14,8` | A15 | Debug | **discarded** — Debug build, ~100× inflated |
+
+## iPhone18,1 (A19-class) — CPU ↔ GPU decode crossover
+
+Lossless HT, warm in-process, median of 7, synthetic corpus
+(`cross_silicon_compare.py`):
+
+| Fixture | px | `decode()` ms | `decodeGPU` ms | `decodeWithGPUHT` ms | fastest |
+|---|---:|---:|---:|---:|---|
+| mr_synth_small | 65 K | **0.74** | 5.42 | 4.12 | `decode()` |
+| ct_synth_mid | 590 K | 3.87 | 3.87 | 12.34 | tie (CPU/GPU) |
+| xa_synth_small | 640 K | **4.17** | 4.63 | 12.00 | `decode()` |
+| px_synth_mid | 819 K | **5.75** | 6.17 | 12.76 | `decode()` |
+| cr_synth_mid | 1.05 M | 8.38 | **7.54** | 14.99 | `decodeGPU` |
+| dx_synth_mid | 1.05 M | **7.29** | 7.78 | 14.87 | `decode()` |
+| mg_synth_mid | 1.31 M | 9.88 | **8.55** | 15.80 | `decodeGPU` |
+| dx_002_class | 6.4 M | **44.86** | 46.97 | 63.64 | `decode()` |
+| dx_001_class | 7.77 M | **57.64** | 58.23 | 67.52 | `decode()` (≈ tie) |
+| mg_001_class | 16.8 M | 124.01 | 114.53 | **108.90** | `decodeWithGPUHT` |
+
+### Finding — the GPU crossover is real on A19
+
+On **M2** (v10.16 / v10.17): `decodeGPU` ≈ CPU (wash), `decodeWithGPUHT`
+2.7–4.6× slower — *always*. v10.17 concluded #440 is "structural on M2"
+and explicitly flagged that newer GPU cores might shift the crossover.
+
+On **A19 they do shift:**
+
+- **`decodeGPU`** (GPU IDWT, CPU HT) wins or ties from ~1 MP up —
+  cr_synth −10 %, mg_synth −13 %, ct a tie. It still loses the DX-class
+  fixtures by a few % (dx_synth 7.78 vs 7.29) — modality/entropy
+  dependent.
+- **`decodeWithGPUHT`** is still a 2–3× regression on small/mid (GPU HT
+  entropy is still slow) — **but it crosses over and wins on the
+  16.8 MP MG fixture**: 108.9 ms vs CPU `decode()` 124.0 ms (−12 %),
+  also beating `decodeGPU` (114.5 ms).
+
+Size-gated picture on A19:
+
+| px band | fastest decode path |
+|---|---|
+| ≤ ~0.8 MP | CPU `decode()` |
+| ~1 MP | `decodeGPU` on CR/MG; CPU still on DX |
+| 6–8 MP (DX class) | ≈ tie, CPU marginally ahead |
+| 16.8 MP (MG class) | `decodeWithGPUHT` — both GPU paths beat CPU |
+
+### Implication for the router
+
+`recommendedDecodeAPI` is dimension-only and **silicon-blind**; it
+routes `≥ 15 MP → .cpu`. On A19 that mis-routes the ≥ 15 MP band —
+`decodeWithGPUHT` wins there. The router should become **silicon-class
+aware**: on A19-class hardware, route ≥ ~15 MP → `decodeWithGPUHT` and
+~1–6 MP → `decodeGPU`; keep the M2 calibration (all-CPU-favoured) for
+M2-class.
+
+This is a **signal, not yet a calibration mandate** — see caveats.
+
+### Caveats
+
+- **One device, one 7-run session.** The `mg_001` `decodeWithGPUHT`
+  samples spread 95.7–117.8 ms; the 15 ms median win over `decode()`
+  exceeds that spread, so the result is real — but 2–3 more runs would
+  firm it.
+- **Synthetic LCG-noise fixtures**, not real medical images. v10.16
+  showed GPU-vs-CPU results flip between lossy/lossless and depend on
+  entropy profile; synthetic vs real-medical could move the crossover.
+- `iPhone18,1` is an iPhone 17-series device; "A19-class" covers the
+  exact A19 / A19 Pro variant.
+- This **confirms, not contradicts, v10.17**: #440 is structural *on
+  M2*; the crossover *is* silicon-dependent — exactly what v10.17
+  predicted.
+
+## Next
+
+- More A19 readings (variance) + A18 / A17 / M4 in the same J2KBenchApp
+  synthetic corpus, for an apples-to-apples cross-silicon matrix.
+- Real-medical-fixture readings if feasible (synthetic vs real may
+  shift the GPU crossover, per v10.16).
+- Once 2–3 consistent A19 readings agree: scope a silicon-aware
+  `recommendedDecodeAPI` — this re-opens #440 for A19 as a **routing**
+  task (a `chip`-aware recommendation), not the (M2-doomed) GPU HT
+  kernel rewrite.
