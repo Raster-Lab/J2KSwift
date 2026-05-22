@@ -278,6 +278,9 @@ enum HostInfo {
         // A16
         case "iPhone15,2", "iPhone15,3": return "Apple A16"
         case "iPhone15,4", "iPhone15,5": return "Apple A16"
+        // A15 (iPhone 13 family + iPhone 14 / 14 Plus)
+        case "iPhone14,2", "iPhone14,3", "iPhone14,4", "iPhone14,5",
+             "iPhone14,7", "iPhone14,8": return "Apple A15"
         // M-series iPad
         case "iPad16,3", "iPad16,4", "iPad16,5", "iPad16,6": return "Apple M4 (iPad Pro)"
         case "iPad14,3", "iPad14,4", "iPad14,5", "iPad14,6": return "Apple M2 (iPad Pro)"
