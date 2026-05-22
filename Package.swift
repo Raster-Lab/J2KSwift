@@ -65,6 +65,14 @@ let package = Package(
         .executable(
             name: "j2kd",
             targets: ["J2KDaemon"]),
+        // v10.5 cross-silicon arc — macOS counterpart of the iOS
+        // J2KBenchApp. Same LCG corpus, same lossless HT encoder, same
+        // warm methodology; emits the canonical J2KBenchApp JSON shape
+        // so M2 / M4 readings line up with iPhone / iPad readings under
+        // Documentation/Benchmarks/data/.
+        .executable(
+            name: "J2KBenchMac",
+            targets: ["J2KBenchMac"]),
         .library(
             name: "J2KDaemonProtocol",
             targets: ["J2KDaemonProtocol"]),
@@ -269,6 +277,17 @@ let package = Package(
             name: "J2KTestApp",
             dependencies: ["J2KCore", "J2KCodec", "J2K3D"],
             path: "Sources/J2KTestApp",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]),
+        // v10.5 cross-silicon arc — macOS bench CLI. Mirrors the iOS
+        // J2KBenchApp's BenchModel/BenchRunner/J2KSampleSource bench
+        // logic so M2/M4 JSONs are apples-to-apples with iPhone JSONs.
+        // See `Sources/J2KBenchMac/J2KBenchMac.swift`.
+        .executableTarget(
+            name: "J2KBenchMac",
+            dependencies: ["J2KCore", "J2KCodec", "J2KMetal"],
+            path: "Sources/J2KBenchMac",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
