@@ -1,0 +1,101 @@
+# Cross-silicon comparison harness
+
+**Branch:** `v10.17-research` · **Date:** 2026-05-22 · **Status:** ready
+for device readings.
+
+This is the harness for the cross-silicon arc — the one open question
+left by v10.16/v10.17: codec-perf research on **M2** is at a structural
+ceiling (`V10_16_GPU_DECODE_UNDERPERF.md`, `V10_17_GPU_HT_ENTROPY_REDESIGN.md`),
+but M3 / M4 / A-series GPU and CPU cores run serial code faster, so the
+CPU↔GPU decode crossover may genuinely differ. This harness ingests
+per-device benchmark JSONs and produces the comparison.
+
+## The question
+
+1. **Positioning.** How does J2KSwift decode/encode wall scale across
+   Apple silicon (M2 → M4 → A18 Pro …)? Backs the "fastest JPEG 2000
+   codec on Apple Silicon" claim.
+2. **The v10.17 GPU crossover.** On M2, `decodeGPU`/`decodeWithGPUHT`
+   never beat the CPU C+NEON path on lossless (structural — see
+   V10_17). Do they on a newer GPU? If a device shows a GPU win,
+   `recommendedDecodeAPI` should be re-calibrated for that silicon
+   class.
+
+## Data-collection flow
+
+```
+J2KBenchApp (v10.5-research)  →  Ad Hoc .ipa  →  Diawi link
+        ↓ tester installs, runs the bench, taps "Share Selected"
+   benchmark-results-<model>-<version>-warm-inproc-<YYYYMMDD>.json
+        ↓ AirDrop / email back
+   Documentation/Benchmarks/data/        ← drop the JSON here
+        ↓
+   python3 Scripts/benchmarks/cross_silicon_compare.py
+```
+
+- The Ad Hoc IPA build is the saved procedure in
+  [[ipa-for-diawi]] (`feedback_ipa_for_diawi.md`).
+- The JSON is the canonical `compare_hosts.py` schema (top-level
+  `host` / `encode` / `decode`, `J2KSwift+inproc` codec) — J2KBenchApp's
+  "Share Selected" emits exactly this.
+- File-name convention `benchmark-results-<model>-<ver>-warm-inproc-<date>.json`
+  buckets it for the glob.
+
+## Running the comparison
+
+```bash
+# all *warm-inproc*.json under Documentation/Benchmarks/data/
+python3 Scripts/benchmarks/cross_silicon_compare.py \
+    --output Documentation/Benchmarks/CROSS_SILICON_REPORT.md
+
+# or explicit hosts, choosing the baseline
+python3 Scripts/benchmarks/cross_silicon_compare.py \
+    data/benchmark-results-Mac142-*-warm-inproc-*.json \
+    data/benchmark-results-iPhone17,1-*-warm-inproc-*.json \
+    --baseline Mac142
+```
+
+It prints a per-fixture decode + encode wall table, one column per
+host, plus the speedup of every host against the baseline. Smoke-tested
+against the committed M2/M4 baselines (M4 decode is 1.4–1.8× M2).
+
+## M2 baseline anchor
+
+The crossover to beat, measured on Apple M2 (v10.16/v10.17, warm
+in-process, lossless HT, median of 7):
+
+| Fixture | px | CPU `decode()` ms | `decodeGPU` ms | `decodeWithGPUHT` ms |
+|---|---:|---:|---:|---:|
+| xa_001 | 1.05 M | 7.2 | 7.5 | 33.0 |
+| px_001 | 3.24 M | 26.6 | 27.4 | 118.8 |
+| dx_002 | 6.4 M | 47.8 | 47.8 | 128.7 |
+
+On M2: `decodeGPU` ≈ CPU; `decodeWithGPUHT` is 2.7–4.6× **slower**. A
+newer device "moves the crossover" if its `decodeGPU` or
+`decodeWithGPUHT` column drops **below** its CPU column.
+
+## Known gap — the GPU columns
+
+J2KBenchApp's **"Share Selected" export carries only the `.cpu` decode**
+(`J2KSwift+inproc` = `J2KDecoder.decode()`), so a device JSON answers
+question 1 (positioning) but **not** question 2 (the GPU crossover) on
+its own. The app *does* measure and display `decodeGPU` /
+`decodeWithGPUHT` per fixture on its detail screen — until the export
+is extended, read the GPU-vs-CPU crossover off the device screen.
+
+**Follow-up (small, on `v10.5-research`):** add `J2KSwift+gpu` and
+`J2KSwift+gpuht` codec entries to the `decode` direction of
+`BenchStore.exportData`. Then `cross_silicon_compare.py` reports the
+crossover directly. Scoped but not done here — it is a J2KBenchApp
+change and this harness lives on `v10.17-research`.
+
+## What to look for
+
+- **Decode positioning** — A18 Pro / M4 decode wall vs M2; expect
+  monotonic improvement with silicon generation.
+- **GPU crossover** — any device where `decodeGPU` < `decode()` or
+  `decodeWithGPUHT` < `decode()`. If found, that silicon class warrants
+  a `recommendedDecodeAPI` re-calibration and re-opens the V10_17
+  question for that hardware.
+- **Encode** — secondary; encode is CPU-only, so it is a pure
+  CPU-core-speed scaling check.
