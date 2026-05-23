@@ -312,6 +312,50 @@ final class V10_18_TrueSelectiveParityTests: XCTestCase {
         XCTAssertEqual(quarter.depth,  volume.depth)
     }
 
+    /// Phase 6 — Z-narrow ROI parity. JP3DSliceStackCodec's
+    /// `zRange:` parameter only decodes from the latest non-residual
+    /// slice ≤ zRange.lowerBound and only emits slices in
+    /// `[zLower, zUpper)`. The voxels in that Z slab must be bit-
+    /// identical to a full-volume decode cropped to the same slab.
+    ///
+    /// The ROI path passes the per-tile Z range through to the
+    /// codec; this test exercises the slice-stack's zRange directly
+    /// via a single-tile JP3D codestream (encoder default tiling
+    /// produces a single tile for small volumes), with a Z range
+    /// that starts in the middle of the volume.
+    func testZNarrowROIBitExactWithFullCropped() async throws {
+        // 64x64 volume with 16 slices, encoded as a single tile.
+        let volume = makeLCGVolume(width: 64, height: 64, depth: 16)
+        let codestream = try await encodeLossless(volume)
+
+        // ROI region that's full XY but narrow Z (slices 8..12). The
+        // ROI decoder picks this up as a single-tile ROI with the
+        // Z-narrow path.
+        let region = JP3DRegion(x: 0..<64, y: 0..<64, z: 8..<12)
+        let roi = try await JP3DROIDecoder().decode(codestream, region: region).volume
+        let full = try await JP3DDecoder().decode(codestream).volume
+
+        XCTAssertEqual(roi.width, 64)
+        XCTAssertEqual(roi.height, 64)
+        XCTAssertEqual(roi.depth, 4)
+
+        for (zi, z) in (8..<12).enumerated() {
+            for y in 0..<64 {
+                for x in 0..<64 {
+                    let want = voxelValue(in: full, x: x, y: y, z: z)
+                    let got  = voxelValue(in: roi, x: x, y: y, z: zi)
+                    if want != got {
+                        XCTFail("Z-narrow voxel mismatch at "
+                                + "full(\(x),\(y),\(z)) "
+                                + "roi(\(x),\(y),\(zi)): "
+                                + "want=\(want) got=\(got)")
+                        return
+                    }
+                }
+            }
+        }
+    }
+
     /// Composition tripwire — combining `resolutionLevel > 0` with a
     /// ROI decoder is the Phase 5 future-work case. JP3DSliceStackCodec
     /// throws today rather than silently producing wrong output. When

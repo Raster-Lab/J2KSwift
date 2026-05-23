@@ -297,20 +297,30 @@ struct JP3DSliceStackCodec: Sendable {
     ///     intersection offset — no second intersection-crop pass is
     ///     needed.
     ///
-    /// All slices in the tile are still decoded along Z because
-    /// Z-delta residuals depend on the prior reconstructed slice;
-    /// the caller filters out-of-Z-range slices when copying to its
-    /// output buffer.
+    /// v10.18-research — `zRange` (Z-narrow ROI skip):
     ///
-    /// Z-delta residual slices stay correct under both partial-res
-    /// and ROI because the residual and the prior reconstructed slice
-    /// are decoded at the SAME parameters, so the per-voxel add
-    /// operates on matched downsampled / region-cropped dims.
+    ///   • `nil` (default) — every slice in the tile is decoded and
+    ///     placed into the output (current behaviour).
+    ///   • non-nil → tile-local Z range — the codec pre-scans the
+    ///     slice headers (flags + length, no decode), finds the
+    ///     latest non-residual slice ≤ `zRange.lowerBound`, and
+    ///     starts decoding from there. Slices in
+    ///     `[z_start, zRange.lowerBound)` are decoded purely to keep
+    ///     the Z-delta residual chain intact and their output is
+    ///     discarded; slices in `[zRange.lowerBound, zRange.upperBound)`
+    ///     are kept. The returned `componentBuffers` are sized for
+    ///     `zRange.count` slices (not the full `sliceCount`).
+    ///
+    /// Z-delta residual slices stay correct under all three modes
+    /// (partial-res, ROI XY, Z-narrow) because residual + prior
+    /// reconstructed slice are decoded at the SAME parameters, so
+    /// the per-voxel add operates on matched dims.
     func decode(
         payload: Data,
         expectedTile: ExpectedTile,
         resolutionLevel: Int = 0,
-        regionOfInterest: (xRange: Range<Int>, yRange: Range<Int>)? = nil
+        regionOfInterest: (xRange: Range<Int>, yRange: Range<Int>)? = nil,
+        zRange: Range<Int>? = nil
     ) async throws -> [[Float]] {
 
         let header = try parseHeader(from: payload)
@@ -364,15 +374,32 @@ struct JP3DSliceStackCodec: Sendable {
             regionYLower = 0
         }
 
+        // v10.18 Phase 6 — Z-narrow ROI. Default = whole-tile Z range.
+        // Clamp to [0, sliceCount); zUpper > zLower is required.
+        let zLower: Int
+        let zUpper: Int
+        if let zr = zRange {
+            zLower = max(0, zr.lowerBound)
+            zUpper = min(header.sliceCount, zr.upperBound)
+            guard zLower < zUpper else {
+                throw J2KError.decodingError(
+                    "JP3D slice-stack: zRange \(zr) is empty after clamping "
+                    + "to [0, \(header.sliceCount))")
+            }
+        } else {
+            zLower = 0
+            zUpper = header.sliceCount
+        }
+        let outSliceCount = zUpper - zLower
+
         let voxelsPerSlice = outTileWidth * outTileHeight
-        let voxelsPerComponent = voxelsPerSlice * header.sliceCount
+        let voxelsPerComponent = voxelsPerSlice * outSliceCount
         var componentBuffers = [[Float]](
             repeating: [Float](repeating: 0, count: voxelsPerComponent),
             count: header.componentCount
         )
 
         let decoder = J2KDecoder()
-        var cursor = payload.index(payload.startIndex, offsetBy: Self.headerByteCount)
 
         // v2 only — v1 codestreams predate this branch and aren't
         // produced anywhere now.
@@ -380,6 +407,53 @@ struct JP3DSliceStackCodec: Sendable {
             throw J2KError.decodingError(
                 "JP3D slice-stack version \(header.version) not supported (need v2)"
             )
+        }
+
+        // v10.18 Phase 6 — pre-scan: walk every slice's flag+length
+        // bytes once to record (flags, codestream subdata range) per
+        // slice. This is O(N) for the small per-slice headers (5 bytes
+        // each plus a length prefix) but pays for itself when zRange
+        // is set, since we can then jump to the latest non-residual
+        // slice ≤ zLower without decoding the prior ones.
+        var sliceEntries: [(flags: UInt8, codestreamStart: Data.Index, length: Int)] = []
+        sliceEntries.reserveCapacity(header.sliceCount)
+        var scanCursor = payload.index(payload.startIndex, offsetBy: Self.headerByteCount)
+        for z in 0..<header.sliceCount {
+            guard scanCursor + 5 <= payload.endIndex else {
+                throw J2KError.decodingError(
+                    "JP3D slice-stack truncated reading slice \(z) header"
+                )
+            }
+            let flags = payload[scanCursor]
+            scanCursor = scanCursor.advanced(by: 1)
+            let length = Int(readUInt32BE(payload, at: scanCursor))
+            scanCursor = scanCursor.advanced(by: 4)
+            guard scanCursor + length <= payload.endIndex else {
+                throw J2KError.decodingError(
+                    "JP3D slice-stack truncated reading slice \(z) "
+                    + "(need \(length) bytes, have \(payload.distance(from: scanCursor, to: payload.endIndex)))"
+                )
+            }
+            sliceEntries.append((flags: flags,
+                                 codestreamStart: scanCursor,
+                                 length: length))
+            scanCursor = scanCursor.advanced(by: length)
+        }
+
+        // v10.18 Phase 6 — find z_start: the latest non-residual slice
+        // ≤ zLower. The encoder always emits slice 0 as non-residual
+        // (no prior slice to delta against), so this scan always
+        // succeeds when zLower < sliceCount. When zRange is nil,
+        // zLower = 0 and z_start = 0, identical to pre-Phase-6.
+        var zStart = 0
+        if zRange != nil && zLower > 0 {
+            for z in stride(from: zLower, through: 0, by: -1) {
+                let isResidual = (sliceEntries[z].flags & Self.sliceFlagIsResidual) != 0
+                if !isResidual {
+                    zStart = z
+                    break
+                }
+            }
         }
 
         // Cache the per-slice 2D codec's decomposition-level count N
@@ -393,27 +467,12 @@ struct JP3DSliceStackCodec: Sendable {
         // Int32 — used to add the residual when `is_residual` is set.
         var prevSliceInt: [[Int32]]? = nil
 
-        for z in 0..<header.sliceCount {
-            guard cursor + 5 <= payload.endIndex else {
-                throw J2KError.decodingError(
-                    "JP3D slice-stack truncated reading slice \(z) header"
-                )
-            }
-            let sliceFlags = payload[cursor]
-            cursor = cursor.advanced(by: 1)
-            let length = Int(readUInt32BE(payload, at: cursor))
-            cursor = cursor.advanced(by: 4)
-
-            guard cursor + length <= payload.endIndex else {
-                throw J2KError.decodingError(
-                    "JP3D slice-stack truncated reading slice \(z) " +
-                    "(need \(length) bytes, have \(payload.distance(from: cursor, to: payload.endIndex)))"
-                )
-            }
+        for z in zStart..<zUpper {
+            let entry = sliceEntries[z]
+            let sliceFlags = entry.flags
             let codestream = payload.subdata(
-                in: cursor..<(cursor.advanced(by: length))
+                in: entry.codestreamStart..<(entry.codestreamStart.advanced(by: entry.length))
             )
-            cursor = cursor.advanced(by: length)
 
             // v10.18 — route through decodeResolution / decodeRegion
             // as appropriate. Four combinations (composition order:
@@ -491,11 +550,17 @@ struct JP3DSliceStackCodec: Sendable {
 
             // Write the reconstructed slice into the per-component
             // Float buffers (the outer JP3DDecoder takes Floats).
-            for c in 0..<sliceInt.count {
-                let dstOffset = z * voxelsPerSlice
-                let src = sliceInt[c]
-                for i in 0..<voxelsPerSlice {
-                    componentBuffers[c][dstOffset + i] = Float(src[i])
+            // v10.18 Phase 6 — only place slices in [zLower, zUpper);
+            // intermediate slices [zStart, zLower) keep the Z-delta
+            // chain alive but their output is discarded.
+            if z >= zLower && z < zUpper {
+                let outZ = z - zLower
+                for c in 0..<sliceInt.count {
+                    let dstOffset = outZ * voxelsPerSlice
+                    let src = sliceInt[c]
+                    for i in 0..<voxelsPerSlice {
+                        componentBuffers[c][dstOffset + i] = Float(src[i])
+                    }
                 }
             }
             prevSliceInt = sliceInt

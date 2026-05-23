@@ -277,7 +277,18 @@ public actor JP3DROIDecoder {
             // wiring future-work" error LOUDLY rather than silently
             // ignoring resolutionLevel (which is what JP3DROIDecoder
             // did pre-Phase-3).
+            //
+            // v10.18-research Phase 6 — Z-narrow ROI skip. Pass the
+            // per-tile Z range to the slice-stack codec so that for
+            // tiles where the ROI Z-range starts deep into the tile,
+            // the codec scans forward from the latest non-residual
+            // slice ≤ zLower (rather than decoding slice 0..zLower
+            // verbatim purely to keep the Z-delta chain alive).
             let K = max(0, configuration.resolutionLevel)
+            let inTileZRange = inTileZLower..<inTileZUpper
+            // The codec returns buffers sized for the tile-local
+            // Z range, not the full tile depth.
+            let returnedSliceCount = inTileZRange.count
             let perCompBuffers: [[Float]]
             do {
                 if useRegionPath {
@@ -288,7 +299,8 @@ public actor JP3DROIDecoder {
                             componentCount: siz.componentCount
                         ),
                         resolutionLevel: K,
-                        regionOfInterest: (inTileXRange, inTileYRange)
+                        regionOfInterest: (inTileXRange, inTileYRange),
+                        zRange: inTileZRange
                     )
                 } else {
                     perCompBuffers = try await JP3DSliceStackCodec().decode(
@@ -297,7 +309,8 @@ public actor JP3DROIDecoder {
                             width: tw, height: th, depth: td,
                             componentCount: siz.componentCount
                         ),
-                        resolutionLevel: K
+                        resolutionLevel: K,
+                        zRange: inTileZRange
                     )
                 }
             } catch {
@@ -308,19 +321,28 @@ public actor JP3DROIDecoder {
                 throw error
             }
 
-            // Place into the output ROI buffer. When useRegionPath,
-            // perCompBuffers is region-sized (regionW * regionH * td);
-            // place directly. Otherwise (whole-tile decode), do the
-            // legacy intersection-crop.
+            // Place into the output ROI buffer. v10.18 Phase 6 — the
+            // codec now returns buffers sized `returnedSliceCount` deep
+            // (= inTileZRange.count) rather than `td` deep. The source
+            // Z index `srcZ` is now offset from `inTileZLower` instead
+            // of `z0` (volume coords) → tile-local `srcZ = z - z0 -
+            // inTileZLower` for any volume Z in `[z0 + inTileZLower,
+            // z0 + inTileZUpper)`.
+            //
+            // When useRegionPath: perCompBuffers is
+            //   regionW * regionH * returnedSliceCount (per component).
+            // When !useRegionPath: perCompBuffers is
+            //   tw * th * returnedSliceCount (per component).
             for comp in 0..<siz.componentCount {
                 let floatCoeffs = perCompBuffers[comp]
-                let intZ0 = max(z0, clampedZ.lowerBound)
-                let intZ1 = min(z0 + td, clampedZ.upperBound)
+                let intZ0 = max(z0 + inTileZLower, clampedZ.lowerBound)
+                let intZ1 = min(z0 + inTileZUpper, clampedZ.upperBound)
+                _ = returnedSliceCount  // bounded by the loop below
 
                 if useRegionPath {
                     let srcSliceVoxels = regionW * regionH
                     for z in intZ0..<intZ1 {
-                        let srcZ = z - z0
+                        let srcZ = (z - z0) - inTileZLower  // tile-local then z-range-local
                         let dstZ = z - clampedZ.lowerBound
                         let srcRowOffset = srcZ * srcSliceVoxels
                         for ry in 0..<regionH {
@@ -334,19 +356,19 @@ public actor JP3DROIDecoder {
                         }
                     }
                 } else {
-                    // Legacy intersection-crop path — only reached when
-                    // the tile is entirely inside the ROI (regionW=tw,
-                    // regionH=th).
+                    // Whole-tile XY decode + intersection-crop (tile
+                    // is entirely inside ROI in XY). Z range is the
+                    // narrowed one.
                     let intX0 = max(x0, clampedX.lowerBound)
                     let intY0 = max(y0, clampedY.lowerBound)
                     let intX1 = min(x0 + tw, clampedX.upperBound)
                     let intY1 = min(y0 + th, clampedY.upperBound)
                     for z in intZ0..<intZ1 {
+                        let srcZ = (z - z0) - inTileZLower
                         for y in intY0..<intY1 {
                             for x in intX0..<intX1 {
                                 let srcX = x - x0
                                 let srcY = y - y0
-                                let srcZ = z - z0
                                 let srcIdx = srcZ * tw * th + srcY * tw + srcX
                                 let dstX = x - clampedX.lowerBound
                                 let dstY = y - clampedY.lowerBound
