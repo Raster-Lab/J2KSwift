@@ -166,8 +166,25 @@ public actor JP3DDecoder {
         let grid = codestream.tileGrid
         let tilesExpected = grid.tilesX * grid.tilesY * grid.tilesZ
 
-        // Allocate output component buffers (Float per voxel)
-        let voxelCount = siz.width * siz.height * siz.depth
+        // v10.18-research — partial-resolution path. resolutionLevel = K:
+        // K = 0   → full resolution (current behaviour, all branches
+        //           below collapse to their original arithmetic).
+        // K > 0   → in-plane (X, Y) dims halved K times; depth (Z) is
+        //           per-slice and unaffected. Tile origins and per-tile
+        //           dimensions scale the same way so the assembled
+        //           volume has no gaps or overlaps.
+        let K = max(0, configuration.resolutionLevel)
+        let scale = 1 << K
+        @inline(__always) func down(_ n: Int) -> Int {
+            (n + scale - 1) / scale
+        }
+        let outW = down(siz.width)
+        let outH = down(siz.height)
+        let outD = siz.depth
+
+        // Allocate output component buffers (Float per voxel) at the
+        // downsampled volume size.
+        let voxelCount = outW * outH * outD
         var componentBuffers = [[Float]](
             repeating: [Float](repeating: 0, count: voxelCount),
             count: siz.componentCount
@@ -201,6 +218,20 @@ public actor JP3DDecoder {
                 continue
             }
 
+            // v10.18 partial-res tile placement. JPEG 2000 spec rule
+            // for downsampled coordinates: ⌈ref / 2^K⌉ for both origin
+            // and origin+extent. For aligned tile grids this yields
+            // adjacent downsampled tile placements without gaps —
+            // the unit test in V10_18_TrueSelectiveParityTests
+            // exercises corner + interior regions to catch any
+            // off-by-one.
+            let outX0 = down(x0)
+            let outY0 = down(y0)
+            let outZ0 = z0
+            let outTW = down(x1) - outX0
+            let outTH = down(y1) - outY0
+            let outTD = td
+
             // M2: every tile written by the new encoder is a slice-stack
             // payload (J3DS magic). Older tile shapes (raw Int32 dump,
             // legacy JP3DHTJ2K) are no longer produced — they only ever
@@ -226,7 +257,8 @@ public actor JP3DDecoder {
                     expectedTile: JP3DSliceStackCodec.ExpectedTile(
                         width: tw, height: th, depth: td,
                         componentCount: siz.componentCount
-                    )
+                    ),
+                    resolutionLevel: K
                 )
             } catch {
                 if configuration.tolerateErrors {
@@ -240,9 +272,9 @@ public actor JP3DDecoder {
             for comp in 0..<siz.componentCount {
                 copyVoxelsToBuffer(
                     from: perCompBuffers[comp], to: &componentBuffers[comp],
-                    tileDims: (tw, th, td),
-                    tileOrigin: (x0, y0, z0),
-                    outWidth: siz.width, outHeight: siz.height
+                    tileDims: (outTW, outTH, outTD),
+                    tileOrigin: (outX0, outY0, outZ0),
+                    outWidth: outW, outHeight: outH
                 )
             }
 
@@ -255,15 +287,24 @@ public actor JP3DDecoder {
         reportProgress(.volumeAssembly, stageProgress: 0.0,
                        tilesDone: tilesDecoded, tilesTotal: tilesExpected)
 
-        // Stage 3: Assemble output volume
+        // Stage 3: Assemble output volume. For partial-res we hand
+        // assembleVolumeComponents a SIZ-like descriptor that reflects
+        // the downsampled dims so the per-component J2KVolumeComponent
+        // metadata matches the buffer geometry.
+        let outSIZ = JP3DSIZInfo(
+            width: outW, height: outH, depth: outD,
+            tileSizeX: siz.tileSizeX, tileSizeY: siz.tileSizeY,
+            tileSizeZ: siz.tileSizeZ,
+            componentCount: siz.componentCount,
+            bitDepth: siz.bitDepth, signed: siz.signed)
         let volumeComponents = assembleVolumeComponents(
-            from: componentBuffers, siz: siz
+            from: componentBuffers, siz: outSIZ
         )
 
         let volume = J2KVolume(
-            width: siz.width,
-            height: siz.height,
-            depth: siz.depth,
+            width: outW,
+            height: outH,
+            depth: outD,
             components: volumeComponents
         )
 
