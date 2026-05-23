@@ -10,18 +10,26 @@
 		01890863E6FD2F34F6CC68D8 /* J2KCore in Frameworks */ = {isa = PBXBuildFile; productRef = D71D6128E3BA746374D7169F /* J2KCore */; };
 		03A71DE8146D9DDF3BA6FB94 /* ImageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 867C5AB1AA4B583054B01E1C /* ImageDetailView.swift */; };
 		064240776E8F39B88BB13D3F /* ViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5905E127BEA9CD1AAF15D226 /* ViewerView.swift */; };
+		0DD4A13AF24351F458419057 /* MPRViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BE261A1085AB5D216E53101 /* MPRViewer.swift */; };
+		142AC73AC7C08D68532AEB5E /* JP3DHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36763BE9C9EEAE57B60E469D /* JP3DHistoryView.swift */; };
+		17D86225A6E2770F552FA401 /* JP3DBenchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1C87F6206DA5CF9791415D /* JP3DBenchStore.swift */; };
 		1A61A39D20A73FB93C81C89C /* xa_real_small_1024x1024.pgm in Resources */ = {isa = PBXBuildFile; fileRef = EFAA58F0BEB3AB42265C744F /* xa_real_small_1024x1024.pgm */; };
+		23A4B7650E145E938C8E9B58 /* JP3DRunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 232B33DCD544D861C7C96CA2 /* JP3DRunView.swift */; };
 		24D58AB2CDD16495C50CF047 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19A1E7A6B6A80C652A0BDAB /* RootTabView.swift */; };
 		2B4715C8A8B7E5F83F41CECC /* ct_real_small_512x512.pgm in Resources */ = {isa = PBXBuildFile; fileRef = C5D5CDDDBA1D4E44B1DBA672 /* ct_real_small_512x512.pgm */; };
 		3317BEDF82291B3B1DA4F681 /* J2KSampleSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 973E65A24C2E4A9744ED85E5 /* J2KSampleSource.swift */; };
 		3BD1B88D048DC37F5AA889F0 /* J2KBenchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F3D6E58FE67406ED891DE67 /* J2KBenchApp.swift */; };
+		4064E6021DC6DF68FD477207 /* JP3DSampleSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D27C20ECBCD789524AC070A /* JP3DSampleSource.swift */; };
 		450A955EF6C3100C5BA2E94F /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593AC0A83722F1EC284D07A3 /* HistoryView.swift */; };
 		4848E88F669939DEA2A7E478 /* BenchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAA52B19640DFEEF558B3368 /* BenchStore.swift */; };
 		4B0022D8FCBBA6EDCDB916BE /* BenchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D2C163E09502FB21B50A828 /* BenchModel.swift */; };
+		593A609B5AE76387CBFD746E /* J2K3D in Frameworks */ = {isa = PBXBuildFile; productRef = D5026098D828062322070168 /* J2K3D */; };
+		5B624DBA02D5F2A8779DCF4E /* JP3DFixtureDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0023C1CB88B5915A71ADCDA7 /* JP3DFixtureDetailView.swift */; };
 		5C23D15AD5ACB73979C0952D /* dx_real_small_2224x2798.pgm in Resources */ = {isa = PBXBuildFile; fileRef = FF068545574584E66B9707B0 /* dx_real_small_2224x2798.pgm */; };
 		69A2739E2806E5E179FAB927 /* mr_real_small_174x192.pgm in Resources */ = {isa = PBXBuildFile; fileRef = 00199389191FDD59E307BA61 /* mr_real_small_174x192.pgm */; };
 		6ADFDA7790A5E2E5E75169E5 /* J2KImageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 853A9AB255EB862E29BD1F54 /* J2KImageRenderer.swift */; };
 		6EA9908B12192929DEED951D /* BenchRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5AE987C58DD2C472057F14 /* BenchRunner.swift */; };
+		71B908B3E8CDA21F10F966D9 /* JP3DBenchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A9FC1B2EDEE253743A7D84 /* JP3DBenchModel.swift */; };
 		7C96232A26156ABEB516923A /* px_real_small_2459x1316.pgm in Resources */ = {isa = PBXBuildFile; fileRef = 79BECC283AC15526260C6911 /* px_real_small_2459x1316.pgm */; };
 		901387C7EBFFD7AB4AD7ADC2 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF466DB8EFA6F9F649001AF /* RunView.swift */; };
 		9115723C7186AECABF80103E /* BenchComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E5BF193778C0F5A92F59A13 /* BenchComponents.swift */; };
@@ -31,28 +39,37 @@
 		E0C04B2F10A32047DBB87024 /* ViewerModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F39F7F7C93C532DF84DA9893 /* ViewerModel.swift */; };
 		E16C602F0D8589A23EF98C39 /* J2KCodec in Frameworks */ = {isa = PBXBuildFile; productRef = 7F5E032FADB220A988B63BC4 /* J2KCodec */; };
 		E9CDF2757549BD0786E65A07 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F71F1DC27C76692ACCC2B5F /* Assets.xcassets */; };
+		F2CEFC785605BC8B85386D89 /* JP3DBenchRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B7976FE368F0BB0B949AD1E /* JP3DBenchRunner.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		00199389191FDD59E307BA61 /* mr_real_small_174x192.pgm */ = {isa = PBXFileReference; path = mr_real_small_174x192.pgm; sourceTree = "<group>"; };
+		0023C1CB88B5915A71ADCDA7 /* JP3DFixtureDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DFixtureDetailView.swift; sourceTree = "<group>"; };
+		02178DA66F3D1A6A305F86AC /* J2KSwift */ = {isa = PBXFileReference; lastKnownFileType = folder; name = J2KSwift; path = ../..; sourceTree = SOURCE_ROOT; };
 		0F3D6E58FE67406ED891DE67 /* J2KBenchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = J2KBenchApp.swift; sourceTree = "<group>"; };
+		232B33DCD544D861C7C96CA2 /* JP3DRunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DRunView.swift; sourceTree = "<group>"; };
+		2B7976FE368F0BB0B949AD1E /* JP3DBenchRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DBenchRunner.swift; sourceTree = "<group>"; };
+		36763BE9C9EEAE57B60E469D /* JP3DHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DHistoryView.swift; sourceTree = "<group>"; };
 		3882133929677F31F2F13B6C /* J2KBenchApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = J2KBenchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3D81A18DC11DFF9E7B43B7F8 /* DICOMReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DICOMReader.swift; sourceTree = "<group>"; };
 		5607DE2BCE127CA25507669E /* FixtureDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureDetailView.swift; sourceTree = "<group>"; };
 		5905E127BEA9CD1AAF15D226 /* ViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerView.swift; sourceTree = "<group>"; };
 		593AC0A83722F1EC284D07A3 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		5D27C20ECBCD789524AC070A /* JP3DSampleSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DSampleSource.swift; sourceTree = "<group>"; };
 		5E5BF193778C0F5A92F59A13 /* BenchComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchComponents.swift; sourceTree = "<group>"; };
 		79BECC283AC15526260C6911 /* px_real_small_2459x1316.pgm */ = {isa = PBXFileReference; path = px_real_small_2459x1316.pgm; sourceTree = "<group>"; };
 		7A5AE987C58DD2C472057F14 /* BenchRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchRunner.swift; sourceTree = "<group>"; };
+		7BE261A1085AB5D216E53101 /* MPRViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPRViewer.swift; sourceTree = "<group>"; };
 		7D2C163E09502FB21B50A828 /* BenchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchModel.swift; sourceTree = "<group>"; };
 		853A9AB255EB862E29BD1F54 /* J2KImageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = J2KImageRenderer.swift; sourceTree = "<group>"; };
 		867C5AB1AA4B583054B01E1C /* ImageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageDetailView.swift; sourceTree = "<group>"; };
 		8F71F1DC27C76692ACCC2B5F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		973E65A24C2E4A9744ED85E5 /* J2KSampleSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = J2KSampleSource.swift; sourceTree = "<group>"; };
 		A19A1E7A6B6A80C652A0BDAB /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		A5A9FC1B2EDEE253743A7D84 /* JP3DBenchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DBenchModel.swift; sourceTree = "<group>"; };
 		BAA52B19640DFEEF558B3368 /* BenchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchStore.swift; sourceTree = "<group>"; };
 		C5D5CDDDBA1D4E44B1DBA672 /* ct_real_small_512x512.pgm */ = {isa = PBXFileReference; path = ct_real_small_512x512.pgm; sourceTree = "<group>"; };
-		D397209EFACCF31B56D983D3 /* agent-a444f1278bb4a6dba */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "agent-a444f1278bb4a6dba"; path = ../..; sourceTree = SOURCE_ROOT; };
+		CD1C87F6206DA5CF9791415D /* JP3DBenchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DBenchStore.swift; sourceTree = "<group>"; };
 		EFAA58F0BEB3AB42265C744F /* xa_real_small_1024x1024.pgm */ = {isa = PBXFileReference; path = xa_real_small_1024x1024.pgm; sourceTree = "<group>"; };
 		F39F7F7C93C532DF84DA9893 /* ViewerModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerModel.swift; sourceTree = "<group>"; };
 		FEF466DB8EFA6F9F649001AF /* RunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunView.swift; sourceTree = "<group>"; };
@@ -67,6 +84,7 @@
 				01890863E6FD2F34F6CC68D8 /* J2KCore in Frameworks */,
 				E16C602F0D8589A23EF98C39 /* J2KCodec in Frameworks */,
 				C2BA9B529CF22014FEB015D2 /* J2KMetal in Frameworks */,
+				593A609B5AE76387CBFD746E /* J2K3D in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -109,6 +127,14 @@
 				0F3D6E58FE67406ED891DE67 /* J2KBenchApp.swift */,
 				853A9AB255EB862E29BD1F54 /* J2KImageRenderer.swift */,
 				973E65A24C2E4A9744ED85E5 /* J2KSampleSource.swift */,
+				A5A9FC1B2EDEE253743A7D84 /* JP3DBenchModel.swift */,
+				2B7976FE368F0BB0B949AD1E /* JP3DBenchRunner.swift */,
+				CD1C87F6206DA5CF9791415D /* JP3DBenchStore.swift */,
+				0023C1CB88B5915A71ADCDA7 /* JP3DFixtureDetailView.swift */,
+				36763BE9C9EEAE57B60E469D /* JP3DHistoryView.swift */,
+				232B33DCD544D861C7C96CA2 /* JP3DRunView.swift */,
+				5D27C20ECBCD789524AC070A /* JP3DSampleSource.swift */,
+				7BE261A1085AB5D216E53101 /* MPRViewer.swift */,
 				A19A1E7A6B6A80C652A0BDAB /* RootTabView.swift */,
 				FEF466DB8EFA6F9F649001AF /* RunView.swift */,
 				F39F7F7C93C532DF84DA9893 /* ViewerModel.swift */,
@@ -131,7 +157,7 @@
 		D6E6D4A6A9CFC11D4828BFEB /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				D397209EFACCF31B56D983D3 /* agent-a444f1278bb4a6dba */,
+				02178DA66F3D1A6A305F86AC /* J2KSwift */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -156,6 +182,7 @@
 				D71D6128E3BA746374D7169F /* J2KCore */,
 				7F5E032FADB220A988B63BC4 /* J2KCodec */,
 				49A0DD107C3DE562CEBC57D2 /* J2KMetal */,
+				D5026098D828062322070168 /* J2K3D */,
 			);
 			productName = J2KBenchApp;
 			productReference = 3882133929677F31F2F13B6C /* J2KBenchApp.app */;
@@ -229,6 +256,14 @@
 				3BD1B88D048DC37F5AA889F0 /* J2KBenchApp.swift in Sources */,
 				6ADFDA7790A5E2E5E75169E5 /* J2KImageRenderer.swift in Sources */,
 				3317BEDF82291B3B1DA4F681 /* J2KSampleSource.swift in Sources */,
+				71B908B3E8CDA21F10F966D9 /* JP3DBenchModel.swift in Sources */,
+				F2CEFC785605BC8B85386D89 /* JP3DBenchRunner.swift in Sources */,
+				17D86225A6E2770F552FA401 /* JP3DBenchStore.swift in Sources */,
+				5B624DBA02D5F2A8779DCF4E /* JP3DFixtureDetailView.swift in Sources */,
+				142AC73AC7C08D68532AEB5E /* JP3DHistoryView.swift in Sources */,
+				23A4B7650E145E938C8E9B58 /* JP3DRunView.swift in Sources */,
+				4064E6021DC6DF68FD477207 /* JP3DSampleSource.swift in Sources */,
+				0DD4A13AF24351F458419057 /* MPRViewer.swift in Sources */,
 				24D58AB2CDD16495C50CF047 /* RootTabView.swift in Sources */,
 				901387C7EBFFD7AB4AD7ADC2 /* RunView.swift in Sources */,
 				E0C04B2F10A32047DBB87024 /* ViewerModel.swift in Sources */,
@@ -442,6 +477,10 @@
 		7F5E032FADB220A988B63BC4 /* J2KCodec */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = J2KCodec;
+		};
+		D5026098D828062322070168 /* J2K3D */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = J2K3D;
 		};
 		D71D6128E3BA746374D7169F /* J2KCore */ = {
 			isa = XCSwiftPackageProductDependency;

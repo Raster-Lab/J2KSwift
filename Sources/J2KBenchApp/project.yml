@@ -113,3 +113,6 @@ targets:
         product: J2KCodec
       - package: J2KSwift
         product: J2KMetal
+      # v10.18-research JP3D arc — Volumes tab + MPR viewer
+      - package: J2KSwift
+        product: J2K3D
