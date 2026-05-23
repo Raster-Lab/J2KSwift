@@ -99,6 +99,30 @@ public actor JP3DROIDecoder {
         let codestream = try parser.parse(data)
         let siz = codestream.siz
 
+        // v10.18-research Phase 5 — fail-loud on the unsupported
+        // combination of resolutionLevel > 0 + sub-region. The full-
+        // volume case (handled below via JP3DDecoder delegation) still
+        // honours resolutionLevel because there's no per-tile cropping.
+        if configuration.resolutionLevel > 0 {
+            let isFullVolumeRequest = (
+                requestedRegion.x.lowerBound <= 0 &&
+                requestedRegion.x.upperBound >= siz.width &&
+                requestedRegion.y.lowerBound <= 0 &&
+                requestedRegion.y.upperBound >= siz.height &&
+                requestedRegion.z.lowerBound <= 0 &&
+                requestedRegion.z.upperBound >= siz.depth)
+            if !isFullVolumeRequest {
+                throw J2KError.decodingError(
+                    "JP3DROIDecoder: combining configuration.resolutionLevel > 0 "
+                    + "with a sub-region is not yet supported. "
+                    + "v10.18 Phase 5 wiring task. "
+                    + "Until then, use either JP3DDecoder(configuration: ...) "
+                    + "for partial-resolution decode, OR "
+                    + "JP3DROIDecoder() (default config) for ROI decode — "
+                    + "not both together.")
+            }
+        }
+
         // Clamp the requested region to valid volume bounds
         let clampedXLower = max(0, requestedRegion.x.lowerBound)
         let clampedXUpper = min(siz.width, requestedRegion.x.upperBound)
@@ -194,11 +218,37 @@ public actor JP3DROIDecoder {
             let th = tileInfo.height
             let td = tileInfo.depth
 
-            // M2: each tile is now a JP3D slice-stack payload — decode
-            // the entire tile (the slice-stack codec runs per-Z-slice
-            // 2D J2K) then crop the intersection into the ROI buffer.
-            // True per-component / per-resolution sub-decoding is a
-            // future ROI optimisation; this preserves correctness.
+            // v10.18 Phase 3 — compute the in-tile XY sub-region in
+            // tile-local coords. JP3DSliceStackCodec routes the per-
+            // slice 2D decode through `decoder.decodeRegion(.direct)`
+            // (v10.6.0 footprint-skip: code-blocks whose synthesis
+            // cone-of-influence misses the region skip entropy decode
+            // entirely) and returns Float buffers sized exactly for
+            // the region rather than the whole tile. The intersection-
+            // crop loop below collapses to a region-local copy with
+            // Z-axis filtering.
+            //
+            // Z stays per-slice because slice-stack residual coding
+            // chains through every slice — we still decode all slices
+            // in the tile to keep Z-delta correct, then only copy the
+            // in-Z-range ones into the ROI buffer.
+            let inTileXLower = max(0, clampedX.lowerBound - x0)
+            let inTileXUpper = min(tw, clampedX.upperBound - x0)
+            let inTileYLower = max(0, clampedY.lowerBound - y0)
+            let inTileYUpper = min(th, clampedY.upperBound - y0)
+            let inTileZLower = max(0, clampedZ.lowerBound - z0)
+            let inTileZUpper = min(td, clampedZ.upperBound - z0)
+
+            // Tile is in tilesByIndex but its intersection is empty:
+            // shouldn't happen (tilesIntersecting filters this), but
+            // defensively skip.
+            guard inTileXLower < inTileXUpper,
+                  inTileYLower < inTileYUpper,
+                  inTileZLower < inTileZUpper else {
+                tilesSkipped += 1
+                continue
+            }
+
             guard JP3DSliceStackCodec.hasMagic(parsedTile.data) else {
                 if configuration.tolerateErrors {
                     warnings.append("Tile \(idx): not a JP3D slice-stack payload (missing 'J3DS' magic)")
@@ -209,15 +259,60 @@ public actor JP3DROIDecoder {
                 )
             }
 
+            let inTileXRange = inTileXLower..<inTileXUpper
+            let inTileYRange = inTileYLower..<inTileYUpper
+            let regionW = inTileXRange.count
+            let regionH = inTileYRange.count
+
+            // Phase 3 fast path only fires when the in-tile region is
+            // strictly smaller than the tile (otherwise the full-tile
+            // decode is identical and bypasses the codec's region-
+            // setup overhead).
+            let useRegionPath = (regionW < tw || regionH < th)
+
+            // v10.18-research Phase 5 — wire JP3DDecoderConfiguration.
+            // resolutionLevel through to the slice-stack codec. When
+            // resolutionLevel > 0 AND a region is being decoded, the
+            // slice-stack codec throws the "combination is the Phase 5
+            // wiring future-work" error LOUDLY rather than silently
+            // ignoring resolutionLevel (which is what JP3DROIDecoder
+            // did pre-Phase-3).
+            //
+            // v10.18-research Phase 6 — Z-narrow ROI skip. Pass the
+            // per-tile Z range to the slice-stack codec so that for
+            // tiles where the ROI Z-range starts deep into the tile,
+            // the codec scans forward from the latest non-residual
+            // slice ≤ zLower (rather than decoding slice 0..zLower
+            // verbatim purely to keep the Z-delta chain alive).
+            let K = max(0, configuration.resolutionLevel)
+            let inTileZRange = inTileZLower..<inTileZUpper
+            // The codec returns buffers sized for the tile-local
+            // Z range, not the full tile depth.
+            let returnedSliceCount = inTileZRange.count
             let perCompBuffers: [[Float]]
             do {
-                perCompBuffers = try await JP3DSliceStackCodec().decode(
-                    payload: parsedTile.data,
-                    expectedTile: JP3DSliceStackCodec.ExpectedTile(
-                        width: tw, height: th, depth: td,
-                        componentCount: siz.componentCount
+                if useRegionPath {
+                    perCompBuffers = try await JP3DSliceStackCodec().decode(
+                        payload: parsedTile.data,
+                        expectedTile: JP3DSliceStackCodec.ExpectedTile(
+                            width: tw, height: th, depth: td,
+                            componentCount: siz.componentCount
+                        ),
+                        resolutionLevel: K,
+                        regionOfInterest: (inTileXRange, inTileYRange),
+                        zRange: inTileZRange
                     )
-                )
+                } else {
+                    perCompBuffers = try await JP3DSliceStackCodec().decode(
+                        payload: parsedTile.data,
+                        expectedTile: JP3DSliceStackCodec.ExpectedTile(
+                            width: tw, height: th, depth: td,
+                            componentCount: siz.componentCount
+                        ),
+                        resolutionLevel: K,
+                        zRange: inTileZRange
+                    )
+                }
             } catch {
                 if configuration.tolerateErrors {
                     warnings.append("Tile \(idx): slice-stack decode failed – \(error)")
@@ -226,28 +321,62 @@ public actor JP3DROIDecoder {
                 throw error
             }
 
+            // Place into the output ROI buffer. v10.18 Phase 6 — the
+            // codec now returns buffers sized `returnedSliceCount` deep
+            // (= inTileZRange.count) rather than `td` deep. The source
+            // Z index `srcZ` is now offset from `inTileZLower` instead
+            // of `z0` (volume coords) → tile-local `srcZ = z - z0 -
+            // inTileZLower` for any volume Z in `[z0 + inTileZLower,
+            // z0 + inTileZUpper)`.
+            //
+            // When useRegionPath: perCompBuffers is
+            //   regionW * regionH * returnedSliceCount (per component).
+            // When !useRegionPath: perCompBuffers is
+            //   tw * th * returnedSliceCount (per component).
             for comp in 0..<siz.componentCount {
                 let floatCoeffs = perCompBuffers[comp]
-                let intX0 = max(x0, clampedX.lowerBound)
-                let intY0 = max(y0, clampedY.lowerBound)
-                let intZ0 = max(z0, clampedZ.lowerBound)
-                let intX1 = min(x0 + tw, clampedX.upperBound)
-                let intY1 = min(y0 + th, clampedY.upperBound)
-                let intZ1 = min(z0 + td, clampedZ.upperBound)
+                let intZ0 = max(z0 + inTileZLower, clampedZ.lowerBound)
+                let intZ1 = min(z0 + inTileZUpper, clampedZ.upperBound)
+                _ = returnedSliceCount  // bounded by the loop below
 
-                for z in intZ0..<intZ1 {
-                    for y in intY0..<intY1 {
-                        for x in intX0..<intX1 {
-                            let srcX = x - x0
-                            let srcY = y - y0
-                            let srcZ = z - z0
-                            let srcIdx = srcZ * tw * th + srcY * tw + srcX
-                            let dstX = x - clampedX.lowerBound
-                            let dstY = y - clampedY.lowerBound
-                            let dstZ = z - clampedZ.lowerBound
-                            let dstIdx = dstZ * roiW * roiH + dstY * roiW + dstX
-                            if srcIdx < floatCoeffs.count && dstIdx < roiVoxels {
-                                roiBuffers[comp][dstIdx] = floatCoeffs[srcIdx]
+                if useRegionPath {
+                    let srcSliceVoxels = regionW * regionH
+                    for z in intZ0..<intZ1 {
+                        let srcZ = (z - z0) - inTileZLower  // tile-local then z-range-local
+                        let dstZ = z - clampedZ.lowerBound
+                        let srcRowOffset = srcZ * srcSliceVoxels
+                        for ry in 0..<regionH {
+                            let dstY = (y0 + inTileYRange.lowerBound + ry) - clampedY.lowerBound
+                            let srcRow = srcRowOffset + ry * regionW
+                            let dstRow = dstZ * roiW * roiH + dstY * roiW
+                            for rx in 0..<regionW {
+                                let dstX = (x0 + inTileXRange.lowerBound + rx) - clampedX.lowerBound
+                                roiBuffers[comp][dstRow + dstX] = floatCoeffs[srcRow + rx]
+                            }
+                        }
+                    }
+                } else {
+                    // Whole-tile XY decode + intersection-crop (tile
+                    // is entirely inside ROI in XY). Z range is the
+                    // narrowed one.
+                    let intX0 = max(x0, clampedX.lowerBound)
+                    let intY0 = max(y0, clampedY.lowerBound)
+                    let intX1 = min(x0 + tw, clampedX.upperBound)
+                    let intY1 = min(y0 + th, clampedY.upperBound)
+                    for z in intZ0..<intZ1 {
+                        let srcZ = (z - z0) - inTileZLower
+                        for y in intY0..<intY1 {
+                            for x in intX0..<intX1 {
+                                let srcX = x - x0
+                                let srcY = y - y0
+                                let srcIdx = srcZ * tw * th + srcY * tw + srcX
+                                let dstX = x - clampedX.lowerBound
+                                let dstY = y - clampedY.lowerBound
+                                let dstZ = z - clampedZ.lowerBound
+                                let dstIdx = dstZ * roiW * roiH + dstY * roiW + dstX
+                                if srcIdx < floatCoeffs.count && dstIdx < roiVoxels {
+                                    roiBuffers[comp][dstIdx] = floatCoeffs[srcIdx]
+                                }
                             }
                         }
                     }
