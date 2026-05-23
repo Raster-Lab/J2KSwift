@@ -16,6 +16,9 @@
 //   --warmups N        untimed warmups per fixture (default 2)
 //   --quick            small-fixture subset, 3 runs / 1 warmup
 //   --output PATH      write the JSON here (default: ./benchmark-results-…)
+//   --jp3d             run the 3D JP3D bench instead (v10.18-research
+//                      Volumes arc); same flags otherwise.
+//                      See `Sources/J2KBenchMac/JP3DBench.swift`.
 //   --help, -h         this help
 //
 // The fixtures + LCG synthesis + encoder config MUST mirror
@@ -307,6 +310,17 @@ struct J2KBenchMac {
         var warmups = 2
         var quick = false
         var output: String?
+
+        // v10.18-research — `--jp3d` shifts the whole binary to the
+        // 3D JP3D bench (a separate corpus + encoder + 3 decode lanes
+        // appropriate for slice-stack volumes). Remaining args are
+        // passed through.
+        let rawArgs = Array(CommandLine.arguments.dropFirst())
+        if rawArgs.contains("--jp3d") {
+            let passthrough = rawArgs.filter { $0 != "--jp3d" }
+            await runJP3DBench(args: passthrough)
+            return
+        }
 
         let args = CommandLine.arguments
         var i = 1
