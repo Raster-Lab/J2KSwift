@@ -23,7 +23,10 @@
 import Foundation
 import J2KCore
 
-/// One fixture in the synthetic JP3D bench corpus.
+/// One fixture in the synthetic JP3D bench corpus. `kind` selects the
+/// voxel-generator (LCG noise for the original bench corpus; one of
+/// the mathematical phantoms in `JP3DPhantomGenerator` for the v10.18
+/// investor-showcase volumes).
 struct JP3DFixture: Identifiable, Hashable, Sendable {
     let id: String
     let modality: String
@@ -32,6 +35,21 @@ struct JP3DFixture: Identifiable, Hashable, Sendable {
     let depth: Int
     let bitDepth: Int
     let seed: UInt64
+    let kind: JP3DPhantomKind
+
+    init(id: String, modality: String,
+         width: Int, height: Int, depth: Int,
+         bitDepth: Int, seed: UInt64,
+         kind: JP3DPhantomKind = .lcg) {
+        self.id = id
+        self.modality = modality
+        self.width = width
+        self.height = height
+        self.depth = depth
+        self.bitDepth = bitDepth
+        self.seed = seed
+        self.kind = kind
+    }
 
     var voxels: Int { width * height * depth }
     var label: String { "\(modality) \(width)\u{00d7}\(height)\u{00d7}\(depth)" }
@@ -129,12 +147,41 @@ struct JP3DBenchRun: Codable, Hashable, Sendable, Identifiable {
 @MainActor
 final class JP3DBenchModel: ObservableObject {
 
-    /// 6 synthetic JP3D fixtures spanning ~250 K → ~16 M voxels across
-    /// CT (16-bit grayscale), MR (16-bit grayscale), and US (8-bit
-    /// grayscale). Sized so the full 4-lane bench (encode + 3 decode
-    /// lanes) at the default 2 warmups + 7 timed runs completes in
-    /// ~1–2 minutes on M-series silicon.
+    /// 12 JP3D fixtures:
+    ///
+    /// **Anatomical phantoms (6)** — visually-recognisable medical
+    /// scans built from mathematical ellipsoids/cylinders, with
+    /// anatomically-correct mm spacing for the MPR viewer. Designed
+    /// for the v10.18 investor showcase: a radiologist or imaging
+    /// engineer recognises each one on sight.
+    ///
+    /// **LCG-noise corpus (6)** — original synthetic-noise fixtures.
+    /// Retained so the bench numbers stay apples-to-apples with the
+    /// pre-v10.18 baselines and so the corpus spans modality / size
+    /// combinations matched to real clinical workloads (US 8-bit,
+    /// CT 16-bit, mammography-class large).
     static let corpus: [JP3DFixture] = [
+        // ── Anatomical phantoms (Investor showcase) ────────────────
+        .init(id: "shepp_logan_3d", modality: "CT brain",
+              width: 256, height: 256, depth: 128, bitDepth: 16, seed: 1,
+              kind: .sheppLogan3D),
+        .init(id: "brain_mri_t1",   modality: "MR brain",
+              width: 256, height: 256, depth: 96,  bitDepth: 16, seed: 2,
+              kind: .brainMRI),
+        .init(id: "thorax_ct",      modality: "CT chest",
+              width: 512, height: 512, depth: 64,  bitDepth: 16, seed: 3,
+              kind: .thoraxCT),
+        .init(id: "abdomen_ct",     modality: "CT abdomen",
+              width: 512, height: 384, depth: 80,  bitDepth: 16, seed: 4,
+              kind: .abdomenCT),
+        .init(id: "spine_mr_sag",   modality: "MR spine sag",
+              width: 192, height: 320, depth: 192, bitDepth: 16, seed: 5,
+              kind: .spineMR),
+        .init(id: "knee_ct",        modality: "CT knee",
+              width: 256, height: 256, depth: 96,  bitDepth: 16, seed: 6,
+              kind: .kneeCT),
+
+        // ── LCG-noise bench corpus (original) ──────────────────────
         .init(id: "mr_3d_small",  modality: "MR", width: 128,  height: 128,  depth: 16,  bitDepth: 16, seed: 1001),
         .init(id: "ct_3d_small",  modality: "CT", width: 256,  height: 256,  depth: 16,  bitDepth: 16, seed: 2001),
         .init(id: "us_3d_small",  modality: "US", width: 320,  height: 240,  depth: 24,  bitDepth: 8,  seed: 3001),

@@ -31,6 +31,7 @@
 		6EA9908B12192929DEED951D /* BenchRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A5AE987C58DD2C472057F14 /* BenchRunner.swift */; };
 		71B908B3E8CDA21F10F966D9 /* JP3DBenchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5A9FC1B2EDEE253743A7D84 /* JP3DBenchModel.swift */; };
 		7C96232A26156ABEB516923A /* px_real_small_2459x1316.pgm in Resources */ = {isa = PBXBuildFile; fileRef = 79BECC283AC15526260C6911 /* px_real_small_2459x1316.pgm */; };
+		7D4423733D6608D1E272A778 /* JP3DPhantomGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78D74AFDDF3C78DA74D23CA /* JP3DPhantomGenerator.swift */; };
 		901387C7EBFFD7AB4AD7ADC2 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF466DB8EFA6F9F649001AF /* RunView.swift */; };
 		9115723C7186AECABF80103E /* BenchComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E5BF193778C0F5A92F59A13 /* BenchComponents.swift */; };
 		98655ABB73441D4AFF5B8AD5 /* DICOMReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D81A18DC11DFF9E7B43B7F8 /* DICOMReader.swift */; };
@@ -72,6 +73,7 @@
 		CD1C87F6206DA5CF9791415D /* JP3DBenchStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DBenchStore.swift; sourceTree = "<group>"; };
 		EFAA58F0BEB3AB42265C744F /* xa_real_small_1024x1024.pgm */ = {isa = PBXFileReference; path = xa_real_small_1024x1024.pgm; sourceTree = "<group>"; };
 		F39F7F7C93C532DF84DA9893 /* ViewerModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerModel.swift; sourceTree = "<group>"; };
+		F78D74AFDDF3C78DA74D23CA /* JP3DPhantomGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JP3DPhantomGenerator.swift; sourceTree = "<group>"; };
 		FEF466DB8EFA6F9F649001AF /* RunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunView.swift; sourceTree = "<group>"; };
 		FF068545574584E66B9707B0 /* dx_real_small_2224x2798.pgm */ = {isa = PBXFileReference; path = dx_real_small_2224x2798.pgm; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -132,6 +134,7 @@
 				CD1C87F6206DA5CF9791415D /* JP3DBenchStore.swift */,
 				0023C1CB88B5915A71ADCDA7 /* JP3DFixtureDetailView.swift */,
 				36763BE9C9EEAE57B60E469D /* JP3DHistoryView.swift */,
+				F78D74AFDDF3C78DA74D23CA /* JP3DPhantomGenerator.swift */,
 				232B33DCD544D861C7C96CA2 /* JP3DRunView.swift */,
 				5D27C20ECBCD789524AC070A /* JP3DSampleSource.swift */,
 				7BE261A1085AB5D216E53101 /* MPRViewer.swift */,
@@ -261,6 +264,7 @@
 				17D86225A6E2770F552FA401 /* JP3DBenchStore.swift in Sources */,
 				5B624DBA02D5F2A8779DCF4E /* JP3DFixtureDetailView.swift in Sources */,
 				142AC73AC7C08D68532AEB5E /* JP3DHistoryView.swift in Sources */,
+				7D4423733D6608D1E272A778 /* JP3DPhantomGenerator.swift in Sources */,
 				23A4B7650E145E938C8E9B58 /* JP3DRunView.swift in Sources */,
 				4064E6021DC6DF68FD477207 /* JP3DSampleSource.swift in Sources */,
 				0DD4A13AF24351F458419057 /* MPRViewer.swift in Sources */,
