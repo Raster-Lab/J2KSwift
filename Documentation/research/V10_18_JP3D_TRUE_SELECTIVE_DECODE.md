@@ -40,26 +40,29 @@ A multi-week JP3D arc spanning four code areas:
 | **Phase 3** | Port v10.6.0 ROI footprint-skip into JP3DROIDecoder (replaces decode-then-crop) | **Done — 1.5-2.2× speedup** |
 | **Phase 4** | v10.7.0 tile-skip — already covered by `JP3DTilingConfiguration.tilesIntersecting` since pre-v10.18 | **Done (documentation-only)** |
 | **Phase 5** | Wire `resolutionLevel` + ROI through `JP3DDecoderConfiguration`; throw loud on the combined case (Phase 5 future for the 2D codec) | **Done** |
+| **Phase 6** | Z-narrow ROI skip — `JP3DSliceStackCodec.decode` gains `zRange:` param; pre-scans slice headers, decodes from latest non-residual ≤ `zLower`, skips out-of-Z-range slices entirely | **Done — additional 17-31% on top of Phase 3 ROI** |
 
 ## Measured wins (M2 release, J2KBenchMac --jp3d --quick)
 
-| Fixture | full ms | res1 ms | Phase 2 vs full | ROI 1/4 ms | Phase 3 vs full |
+| Fixture | full ms | res1 ms (P2) | Phase 2 vs full | ROI 1/4 ms (P6) | Phase 6 vs full |
 |---|---:|---:|---:|---:|---:|
-| mr_3d_small (128×128×16, 262K vox)  | 13.95 | 5.94  | **2.35×** | 8.02  | **1.74×** |
-| ct_3d_small (256×256×16, 1 M vox)   | 43.25 | 14.52 | **2.98×** | 19.61 | **2.21×** |
-| mr_3d_mid   (256×256×32, 2 M vox)   | 87.06 | 29.09 | **2.99×** | 39.36 | **2.21×** |
+| mr_3d_small (128×128×16, 262K vox)  | 18.78 | 8.45  | **2.22×** | **5.57**  | **3.37×** |
+| ct_3d_small (256×256×16, 1 M vox)   | 64.45 | 21.10 | **3.05×** | **15.55** | **4.14×** |
+| mr_3d_mid   (256×256×32, 2 M vox)   | 130.13 | 43.25 | **3.01×** | **32.84** | **3.96×** |
 
-The Phase 2 ratios (2.4-3.2×) match the 2D v10.5.0 arc's 3-8×
+The Phase 2 ratios (~2.2–3.1×) match the 2D v10.5.0 arc's 3-8×
 thumbnail finding — JP3D's slice-stack arch means the 3D win is
 exactly the 2D win applied per-slice, including the Z-delta
 residual path which decodes residual + base at the same downsampled
 resolution.
 
-The Phase 3 ratios (1.7-2.2×) on centre-quarter ROI are bound by
-the Z-axis: all slices in an intersecting tile still decode because
-Z-delta residuals chain through the slice sequence. A future Phase
-could batch-extract non-residual slice segments to skip out-of-Z-
-range slices entirely — projected additional 2× on Z-narrow ROIs.
+Phase 3 alone (XY footprint-skip) brought centre-1/4 ROI to ~1.7-2.2×
+faster than full. **Phase 6 (Z-narrow skip) brings the combined
+total to 3.4-4.1× faster** — the per-tile Z range is now passed
+through to the codec, which pre-scans slice headers and starts
+decoding from the latest non-residual ≤ `zLower`, completely
+skipping the unused Z-prefix slices. Z-delta residual correctness
+is preserved by the non-residual restart anchor.
 
 The combined case (`resolutionLevel > 0 + sub-region ROI`) throws
 LOUDLY rather than silently doing decode-at-full-res. The 2D codec
@@ -77,13 +80,17 @@ JP3DDecoder.decode
   └ for each tile:
     JP3DSliceStackCodec.decode(
         payload, expectedTile,
-        resolutionLevel: K,                  ← v10.18 Phase 2
-        regionOfInterest: (xRange, yRange))  ← v10.18 Phase 3
-      └ for each slice:
+        resolutionLevel: K,                     ← v10.18 Phase 2
+        regionOfInterest: (xRange, yRange),     ← v10.18 Phase 3
+        zRange: inTileZRange)                   ← v10.18 Phase 6
+      └ pre-scan slice headers (O(N), no decode)
+      └ z_start = latest non-residual ≤ zRange.lowerBound
+      └ for each slice in [z_start, zRange.upperBound):
         K == 0  +  ROI nil    → J2KDecoder.decode             (current)
         K == 0  +  ROI set    → J2KDecoder.decodeRegion(.direct)  (P3)
         K > 0   +  ROI nil    → J2KDecoder.decodeResolution   (P2)
         K > 0   +  ROI set    → THROW: Phase 5 wiring future
+        place into output buffer only if z ∈ [zLower, zUpper) ← P6
 ```
 
 Each of the four cells composes the existing 2D API surface — no
@@ -175,10 +182,8 @@ cross_silicon_compare.py harness reads them.
 - **Combined `resolutionLevel + ROI`** — needs the 2D codec to support
   "footprint-skip at a downsampled resolution" first; not a JP3D
   problem.
-- **Z-narrow ROI skip** — when an ROI's Z-range is narrow relative
-  to the tile depth, the slice-stack codec still decodes every slice
-  due to Z-delta residual chaining. A future phase could batch non-
-  residual segments and skip out-of-Z-range ones.
+- ~~**Z-narrow ROI skip**~~ — **CLOSED** by Phase 6 above. ROI 1/4
+  is now 3.4-4.1× faster than full decode (vs Phase 3's 1.7-2.2×).
 - **GPU iDWT for JP3D** — JP3DMetalDWT.swift exists but isn't wired
   into JP3DDecoder. Orthogonal to v10.18; would be its own arc.
 - **Real DICOM fixtures in the iOS app** — `project.yml` bundles 2D
