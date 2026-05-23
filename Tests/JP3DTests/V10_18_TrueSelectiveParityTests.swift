@@ -311,4 +311,30 @@ final class V10_18_TrueSelectiveParityTests: XCTestCase {
                        "Phase 2: resolutionLevel=2 must downsample Y by 4")
         XCTAssertEqual(quarter.depth,  volume.depth)
     }
+
+    /// Composition tripwire — combining `resolutionLevel > 0` with a
+    /// ROI decoder is the Phase 5 future-work case. JP3DSliceStackCodec
+    /// throws today rather than silently producing wrong output. When
+    /// Phase 5 wires the combination through, this test will start
+    /// passing the (currently absent) success branch — at that point
+    /// invert the assertion to check the combined output instead.
+    func testCombinedResolutionLevelAndROIIsPhase5Future() async throws {
+        let volume = makeLCGVolume(width: 64, height: 64, depth: 8)
+        let codestream = try await encodeLossless(volume)
+
+        let cfg = JP3DDecoderConfiguration(resolutionLevel: 1)
+        let region = JP3DRegion(x: 16..<48, y: 16..<48, z: 0..<4)
+
+        do {
+            _ = try await JP3DROIDecoder(configuration: cfg).decode(
+                codestream, region: region)
+            XCTFail("Phase 5 has landed — invert this assertion to verify "
+                    + "the combined output instead.")
+        } catch {
+            // Expected today: JP3DSliceStackCodec.decode throws when
+            // both resolutionLevel > 0 AND regionOfInterest are set.
+            // The check happens per-tile during the ROI decode, so we
+            // accept any error here.
+        }
+    }
 }

@@ -99,6 +99,30 @@ public actor JP3DROIDecoder {
         let codestream = try parser.parse(data)
         let siz = codestream.siz
 
+        // v10.18-research Phase 5 — fail-loud on the unsupported
+        // combination of resolutionLevel > 0 + sub-region. The full-
+        // volume case (handled below via JP3DDecoder delegation) still
+        // honours resolutionLevel because there's no per-tile cropping.
+        if configuration.resolutionLevel > 0 {
+            let isFullVolumeRequest = (
+                requestedRegion.x.lowerBound <= 0 &&
+                requestedRegion.x.upperBound >= siz.width &&
+                requestedRegion.y.lowerBound <= 0 &&
+                requestedRegion.y.upperBound >= siz.height &&
+                requestedRegion.z.lowerBound <= 0 &&
+                requestedRegion.z.upperBound >= siz.depth)
+            if !isFullVolumeRequest {
+                throw J2KError.decodingError(
+                    "JP3DROIDecoder: combining configuration.resolutionLevel > 0 "
+                    + "with a sub-region is not yet supported. "
+                    + "v10.18 Phase 5 wiring task. "
+                    + "Until then, use either JP3DDecoder(configuration: ...) "
+                    + "for partial-resolution decode, OR "
+                    + "JP3DROIDecoder() (default config) for ROI decode — "
+                    + "not both together.")
+            }
+        }
+
         // Clamp the requested region to valid volume bounds
         let clampedXLower = max(0, requestedRegion.x.lowerBound)
         let clampedXUpper = min(siz.width, requestedRegion.x.upperBound)
@@ -246,6 +270,14 @@ public actor JP3DROIDecoder {
             // setup overhead).
             let useRegionPath = (regionW < tw || regionH < th)
 
+            // v10.18-research Phase 5 — wire JP3DDecoderConfiguration.
+            // resolutionLevel through to the slice-stack codec. When
+            // resolutionLevel > 0 AND a region is being decoded, the
+            // slice-stack codec throws the "combination is the Phase 5
+            // wiring future-work" error LOUDLY rather than silently
+            // ignoring resolutionLevel (which is what JP3DROIDecoder
+            // did pre-Phase-3).
+            let K = max(0, configuration.resolutionLevel)
             let perCompBuffers: [[Float]]
             do {
                 if useRegionPath {
@@ -255,6 +287,7 @@ public actor JP3DROIDecoder {
                             width: tw, height: th, depth: td,
                             componentCount: siz.componentCount
                         ),
+                        resolutionLevel: K,
                         regionOfInterest: (inTileXRange, inTileYRange)
                     )
                 } else {
@@ -263,7 +296,8 @@ public actor JP3DROIDecoder {
                         expectedTile: JP3DSliceStackCodec.ExpectedTile(
                             width: tw, height: th, depth: td,
                             componentCount: siz.componentCount
-                        )
+                        ),
+                        resolutionLevel: K
                     )
                 }
             } catch {
