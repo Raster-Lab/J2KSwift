@@ -66,6 +66,25 @@ let package = Package(
         .executable(
             name: "J2KTestApp",
             targets: ["J2KTestApp"]),
+        // v10.5 cross-silicon arc — shareable SwiftUI bench app
+        // lives in `Sources/J2KBenchApp/` as an xcodegen-generated
+        // xcodeproj wrapper, NOT a SwiftPM executable target.
+        // SwiftPM-emitted iOS executables aren't proper .app
+        // bundles (no Info.plist, no signing, no UIKit lifecycle),
+        // so they can't install on a device. The xcodeproj at
+        // Sources/J2KBenchApp/J2KBenchApp.xcodeproj wraps the same
+        // sources with automatic signing + provisioning. Re-generate
+        // after edits with `cd Sources/J2KBenchApp && xcodegen
+        // generate`. See Sources/J2KBenchApp/README.md.
+        // v10.5 cross-silicon arc — macOS counterpart of the iOS
+        // J2KBenchApp. Same LCG corpus, same lossless HT encoder, same
+        // warm methodology; emits the canonical J2KBenchApp JSON shape
+        // so M2 / M4 readings line up with iPhone / iPad readings under
+        // Documentation/Benchmarks/data/. v10.18-research extends with
+        // a `--jp3d` mode for 3D slice-stack volume bench.
+        .executable(
+            name: "J2KBenchMac",
+            targets: ["J2KBenchMac"]),
         // v8 Phase 6.3 — XPC daemon (macOS-only). Long-lived
         // process that holds J2KMetalSession warm across CLI
         // invocations, listening on a Mach service registered
@@ -277,5 +296,22 @@ let package = Package(
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]),
+        // v10.5 cross-silicon arc — macOS bench CLI. Mirrors the iOS
+        // J2KBenchApp's BenchModel/BenchRunner/J2KSampleSource bench
+        // logic so M2/M4 JSONs are apples-to-apples with iPhone JSONs.
+        // v10.18-research: also drives the JP3D Volumes bench when
+        // invoked with `--jp3d`. See `Sources/J2KBenchMac/`.
+        .executableTarget(
+            name: "J2KBenchMac",
+            dependencies: ["J2KCore", "J2KCodec", "J2KMetal", "J2K3D"],
+            path: "Sources/J2KBenchMac",
+            swiftSettings: [
+                .unsafeFlags(["-parse-as-library"])
+            ]),
+        // J2KBenchApp deliberately omitted as a SwiftPM target —
+        // see the matching products comment above. Its sources are
+        // wired through `Sources/J2KBenchApp/J2KBenchApp.xcodeproj`
+        // instead, which produces a proper iOS .app bundle with
+        // automatic provisioning.
     ]
 )

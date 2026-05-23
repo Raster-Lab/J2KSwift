@@ -1,0 +1,115 @@
+# xcodegen spec for J2KBenchApp (iOS).
+#
+# Generates J2KBenchApp.xcodeproj that wraps the SwiftPM
+# J2KBenchApp sources as a real iOS .app target. Without this
+# wrapper, Xcode treats the SwiftPM executable as a plain Mach-O
+# and `IDEInstallCoreDeviceWorker` rejects the install on device
+# with "The executable is not codesigned".
+#
+# Regenerate after editing:
+#     cd Sources/J2KBenchApp && xcodegen generate
+#
+# Then in Xcode:
+#     open Sources/J2KBenchApp/J2KBenchApp.xcodeproj
+#     Pick J2KBenchApp scheme → your iPhone → ⌘R
+#
+# Bundle ID is suffixed with $(DEVELOPMENT_TEAM) so each tester
+# gets a per-team unique ID (Apple's portal requires globally
+# unique bundle IDs for free Personal Teams).
+
+name: J2KBenchApp
+options:
+  bundleIdPrefix: in.raster.j2k
+  deploymentTarget:
+    iOS: "18.0"
+  developmentLanguage: en
+
+packages:
+  J2KSwift:
+    path: ../..
+
+targets:
+  J2KBenchApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: .
+        excludes:
+          - "Info.plist"
+          - "README.md"
+          - "TESTING.md"
+          - "project.yml"
+          - "J2KBenchApp.xcodeproj"
+      # Bundled real (DICOM-derived) medical images for the Viewer tab,
+      # referenced in place from the cross-codec fixtures so they aren't
+      # duplicated into git. ~22 MB total.
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/mr_real_small_174x192.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/ct_real_small_512x512.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/xa_real_small_1024x1024.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/px_real_small_2459x1316.pgm
+        buildPhase: resources
+      - path: ../../Tests/Fixtures/CrossCodec/medical-real/dx_real_small_2224x2798.pgm
+        buildPhase: resources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: J2K Bench
+        CFBundleName: J2KBench
+        CFBundleShortVersionString: 10.1.0
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: ""
+          UIImageRespectsSafeAreaInsets: true
+        UIRequiredDeviceCapabilities:
+          - arm64
+          - metal
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # UIActivityViewController routes through these.
+        # NSPhotoLibraryAddUsageDescription covers the "Save to
+        # Photos" item that auto-appears in the share sheet on
+        # iOS; without it iOS silently hides that activity.
+        NSPhotoLibraryAddUsageDescription: J2K Bench needs Photos access only if you tap "Save to Photos" in the share sheet for the JSON file. The bench itself never accesses your photos.
+        NSPhotoLibraryUsageDescription: J2K Bench does not read photos. This text is here only because iOS's share sheet may surface a "Photos" activity for the JSON file.
+        # Lock to portrait + landscape, no thermal-throttle bias
+        # from device orientation changes mid-bench.
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        # Each tester must set DEVELOPMENT_TEAM in Xcode →
+        # Signing & Capabilities (or pass DEVELOPMENT_TEAM=<id>
+        # on the xcodebuild command line) so automatic signing can
+        # fetch a provisioning profile against their own Apple ID.
+        # If two testers happen to share an Apple ID, they'll get
+        # a bundle-ID-already-registered error on the developer
+        # portal — edit the Bundle Identifier field in the Signing
+        # tab to anything unique (e.g. add your initials).
+        PRODUCT_BUNDLE_IDENTIFIER: in.raster.j2k.bench
+        PRODUCT_NAME: J2K Bench
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: "YES"
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_EMIT_LOC_STRINGS: "YES"
+    dependencies:
+      - package: J2KSwift
+        product: J2KCore
+      - package: J2KSwift
+        product: J2KCodec
+      - package: J2KSwift
+        product: J2KMetal
