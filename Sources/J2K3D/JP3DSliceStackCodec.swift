@@ -266,9 +266,30 @@ struct JP3DSliceStackCodec: Sendable {
     /// Parse a slice-stack payload, decode each slice, and return the
     /// reconstructed voxel buffers (one Float buffer per component, in
     /// volume voxel order — i.e. interior tile coordinates).
+    ///
+    /// v10.18-research — `resolutionLevel`:
+    ///
+    ///   • `0` (default) — full-resolution decode, current behaviour.
+    ///     The per-slice 2D codestream is decoded via `decoder.decode(_)`
+    ///     and the returned slice is at the full encoded dimensions
+    ///     `header.tileWidth × header.tileHeight`.
+    ///   • `K > 0` — partial-resolution decode. Each per-slice 2D
+    ///     codestream is decoded via `decoder.decodeResolution(_:options:)`
+    ///     with the 2D `level` mapped from JP3D's K (where K=0 is full
+    ///     and K rises toward the LL-band thumbnail). The returned
+    ///     `componentBuffers` are sized for the **downsampled** in-plane
+    ///     dimensions (Z is per-slice and not affected). The caller
+    ///     (`JP3DDecoder.decode`) must allocate its volume + tile-origin
+    ///     placement at the same downsampled scale.
+    ///
+    /// Z-delta residual slices stay correct under partial-res because
+    /// both the residual and the prior reconstructed slice are decoded
+    /// at the SAME `resolutionLevel`, so the per-voxel add operates on
+    /// matched downsampled dims.
     func decode(
         payload: Data,
-        expectedTile: ExpectedTile
+        expectedTile: ExpectedTile,
+        resolutionLevel: Int = 0
     ) async throws -> [[Float]] {
 
         let header = try parseHeader(from: payload)
@@ -287,8 +308,22 @@ struct JP3DSliceStackCodec: Sendable {
             )
         }
 
-        let voxelsPerComponent = header.tileWidth * header.tileHeight * header.sliceCount
-        let voxelsPerSlice = header.tileWidth * header.tileHeight
+        // v10.18 — derive the per-slice decoded dimensions for this
+        // resolutionLevel. K = 0 → identity (current behaviour).
+        let K = max(0, resolutionLevel)
+        let outTileWidth: Int
+        let outTileHeight: Int
+        if K == 0 {
+            outTileWidth = header.tileWidth
+            outTileHeight = header.tileHeight
+        } else {
+            let factor = 1 << K
+            outTileWidth = (header.tileWidth + factor - 1) / factor
+            outTileHeight = (header.tileHeight + factor - 1) / factor
+        }
+
+        let voxelsPerSlice = outTileWidth * outTileHeight
+        let voxelsPerComponent = voxelsPerSlice * header.sliceCount
         var componentBuffers = [[Float]](
             repeating: [Float](repeating: 0, count: voxelsPerComponent),
             count: header.componentCount
@@ -304,6 +339,13 @@ struct JP3DSliceStackCodec: Sendable {
                 "JP3D slice-stack version \(header.version) not supported (need v2)"
             )
         }
+
+        // Cache the per-slice 2D codec's decomposition-level count N
+        // on the first slice's metadata peek, then reuse — JP3D
+        // produces all slices with the same N (JP3DEncoder.levelsX/Y
+        // is fixed across the volume), so a per-slice peek would
+        // cost N parses for no information.
+        var perSliceDecompLevels: Int? = nil
 
         // Holds the previous reconstructed slice, per component, as
         // Int32 — used to add the residual when `is_residual` is set.
@@ -331,10 +373,26 @@ struct JP3DSliceStackCodec: Sendable {
             )
             cursor = cursor.advanced(by: length)
 
-            let image = try await decoder.decode(codestream)
+            // v10.18 — route through decodeResolution when K > 0.
+            // 2D codec's `level` semantics: level=N → full resolution,
+            // level=0 → thumbnail. JP3D's K is the *halvings-from-full*
+            // count, so slice-2D level = max(0, N - K).
+            let image: J2KImage
+            if K == 0 {
+                image = try await decoder.decode(codestream)
+            } else {
+                if perSliceDecompLevels == nil {
+                    perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
+                }
+                let N = perSliceDecompLevels ?? 0
+                let sliceLevel = max(0, N - K)
+                let opts = J2KResolutionDecodingOptions(
+                    level: sliceLevel, upscale: false)
+                image = try await decoder.decodeResolution(codestream, options: opts)
+            }
             let isResidual = (sliceFlags & Self.sliceFlagIsResidual) != 0
             let decodedInt = try readImageAsInt32(
-                image, tileWidth: header.tileWidth, tileHeight: header.tileHeight,
+                image, tileWidth: outTileWidth, tileHeight: outTileHeight,
                 bitDepth: header.bitDepth, signed: isResidual
             )
 
@@ -849,5 +907,44 @@ struct JP3DSliceStackCodec: Sendable {
         let b2 = UInt32(data[index.advanced(by: 2)])
         let b3 = UInt32(data[index.advanced(by: 3)])
         return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+    }
+
+    // MARK: - Inline COD-marker peek (v10.18)
+
+    /// Scan a per-slice 2D JPEG 2000 codestream and return the
+    /// decomposition-level count N from its first COD marker
+    /// (FF 52), or 0 if not findable.
+    ///
+    /// COD marker segment layout (per Rec. ITU-T T.800 / ISO/IEC
+    /// 15444-1), offsets relative to the FF of the marker:
+    ///
+    ///   0..1   FF 52       marker
+    ///   2..3   Lcod        segment length (BE) — not used here
+    ///   4      Scod        coding style
+    ///   5..8   SGcod       (Prog 1, NumLayers 2, MCT 1)
+    ///   9      SPcod.NL    decomposition levels  ← what we want
+    ///   10+    SPcod.{xcb,ycb,…}
+    ///
+    /// Scoped to the first 256 bytes (SOC + SIZ + COD all land well
+    /// under that on every J2KSwift codestream), so we never scan the
+    /// whole per-slice payload.
+    @usableFromInline
+    static func peekDecompositionLevels(_ data: Data) -> Int {
+        let scanLimit = min(data.count, 256)
+        // Need at least i + 10 in-bounds: FF (i), 52 (i+1), … NL (i+9).
+        guard scanLimit >= 11 else { return 0 }
+        // SOC is FF 4F at the start; jump past it.
+        var i = data.startIndex + 2
+        let upper = data.startIndex + scanLimit - 10
+        while i <= upper {
+            if data[i] == 0xFF && data[i.advanced(by: 1)] == 0x52 {
+                let nlIndex = i.advanced(by: 9)
+                if nlIndex < data.endIndex {
+                    return Int(data[nlIndex])
+                }
+            }
+            i = i.advanced(by: 1)
+        }
+        return 0
     }
 }
