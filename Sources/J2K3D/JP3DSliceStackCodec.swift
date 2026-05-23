@@ -282,14 +282,35 @@ struct JP3DSliceStackCodec: Sendable {
     ///     (`JP3DDecoder.decode`) must allocate its volume + tile-origin
     ///     placement at the same downsampled scale.
     ///
-    /// Z-delta residual slices stay correct under partial-res because
-    /// both the residual and the prior reconstructed slice are decoded
-    /// at the SAME `resolutionLevel`, so the per-voxel add operates on
-    /// matched downsampled dims.
+    /// v10.18-research — `regionOfInterest`:
+    ///
+    ///   • `nil` (default) — whole tile is decoded, current behaviour.
+    ///   • non-nil — the per-slice 2D codestream is decoded via
+    ///     `decoder.decodeRegion(_:options:)` with the in-tile XY sub-
+    ///     region (v10.6.0 `.direct` strategy: code-blocks outside
+    ///     the region's inverse-DWT footprint skip entropy decode).
+    ///     The returned `componentBuffers` are sized for the
+    ///     **region** dims (`regionOfInterest.xRange.count *
+    ///     regionOfInterest.yRange.count * sliceCount`), in tile-local
+    ///     region coordinates. The caller (`JP3DROIDecoder.decode`)
+    ///     places these directly into the output ROI buffer at the
+    ///     intersection offset — no second intersection-crop pass is
+    ///     needed.
+    ///
+    /// All slices in the tile are still decoded along Z because
+    /// Z-delta residuals depend on the prior reconstructed slice;
+    /// the caller filters out-of-Z-range slices when copying to its
+    /// output buffer.
+    ///
+    /// Z-delta residual slices stay correct under both partial-res
+    /// and ROI because the residual and the prior reconstructed slice
+    /// are decoded at the SAME parameters, so the per-voxel add
+    /// operates on matched downsampled / region-cropped dims.
     func decode(
         payload: Data,
         expectedTile: ExpectedTile,
-        resolutionLevel: Int = 0
+        resolutionLevel: Int = 0,
+        regionOfInterest: (xRange: Range<Int>, yRange: Range<Int>)? = nil
     ) async throws -> [[Float]] {
 
         let header = try parseHeader(from: payload)
@@ -311,15 +332,36 @@ struct JP3DSliceStackCodec: Sendable {
         // v10.18 — derive the per-slice decoded dimensions for this
         // resolutionLevel. K = 0 → identity (current behaviour).
         let K = max(0, resolutionLevel)
-        let outTileWidth: Int
-        let outTileHeight: Int
+        let baseTileWidth: Int
+        let baseTileHeight: Int
         if K == 0 {
-            outTileWidth = header.tileWidth
-            outTileHeight = header.tileHeight
+            baseTileWidth = header.tileWidth
+            baseTileHeight = header.tileHeight
         } else {
             let factor = 1 << K
-            outTileWidth = (header.tileWidth + factor - 1) / factor
-            outTileHeight = (header.tileHeight + factor - 1) / factor
+            baseTileWidth = (header.tileWidth + factor - 1) / factor
+            baseTileHeight = (header.tileHeight + factor - 1) / factor
+        }
+
+        // v10.18 Phase 3 — region-of-interest. If set, the output slice
+        // dims shrink to the region. (The region is expressed in
+        // *downsampled* tile-local coords if K > 0; callers translate
+        // before passing.) For K == 0 and ROI nil, this collapses to
+        // identity = the current behaviour.
+        let outTileWidth: Int
+        let outTileHeight: Int
+        let regionXLower: Int
+        let regionYLower: Int
+        if let roi = regionOfInterest {
+            outTileWidth = roi.xRange.count
+            outTileHeight = roi.yRange.count
+            regionXLower = roi.xRange.lowerBound
+            regionYLower = roi.yRange.lowerBound
+        } else {
+            outTileWidth = baseTileWidth
+            outTileHeight = baseTileHeight
+            regionXLower = 0
+            regionYLower = 0
         }
 
         let voxelsPerSlice = outTileWidth * outTileHeight
@@ -373,12 +415,39 @@ struct JP3DSliceStackCodec: Sendable {
             )
             cursor = cursor.advanced(by: length)
 
-            // v10.18 — route through decodeResolution when K > 0.
-            // 2D codec's `level` semantics: level=N → full resolution,
-            // level=0 → thumbnail. JP3D's K is the *halvings-from-full*
-            // count, so slice-2D level = max(0, N - K).
+            // v10.18 — route through decodeResolution / decodeRegion
+            // as appropriate. Four combinations (composition order:
+            // ROI ⊕ resolutionLevel for clarity):
+            //
+            //   (K=0, no ROI) → decoder.decode             (current)
+            //   (K=0,    ROI) → decoder.decodeRegion       (Phase 3)
+            //   (K>0, no ROI) → decoder.decodeResolution   (Phase 2)
+            //   (K>0,    ROI) → decoder.decodeRegion       (Phase 2+3)
+            //                   then partial-res must be expressed
+            //                   inside the J2KROIDecodingOptions —
+            //                   currently the 2D ROI path always
+            //                   decodes at full resolution. Falls back
+            //                   to (K=0, ROI) for safety and the
+            //                   tile-output dims must therefore be in
+            //                   FULL tile coords; assert K == 0 when
+            //                   ROI is set (the JP3DROIDecoder caller
+            //                   today never combines them, and the
+            //                   composition is a Phase 5 wiring task).
+            if regionOfInterest != nil && K > 0 {
+                throw J2KError.decodingError(
+                    "JP3D slice-stack: combining resolutionLevel > 0 with "
+                    + "regionOfInterest is not yet supported. v10.18 Phase 5 "
+                    + "is the wiring task.")
+            }
             let image: J2KImage
-            if K == 0 {
+            if let roi = regionOfInterest {
+                let opts = J2KROIDecodingOptions(
+                    region: J2KRegion(
+                        x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
+                        width: roi.xRange.count, height: roi.yRange.count),
+                    strategy: .direct)
+                image = try await decoder.decodeRegion(codestream, options: opts)
+            } else if K == 0 {
                 image = try await decoder.decode(codestream)
             } else {
                 if perSliceDecompLevels == nil {
@@ -390,6 +459,7 @@ struct JP3DSliceStackCodec: Sendable {
                     level: sliceLevel, upscale: false)
                 image = try await decoder.decodeResolution(codestream, options: opts)
             }
+            _ = regionXLower; _ = regionYLower  // currently unused; placement is region-local
             let isResidual = (sliceFlags & Self.sliceFlagIsResidual) != 0
             let decodedInt = try readImageAsInt32(
                 image, tileWidth: outTileWidth, tileHeight: outTileHeight,
