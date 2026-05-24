@@ -354,17 +354,27 @@ struct JP3DSliceStackCodec: Sendable {
         }
 
         // v10.18 Phase 3 — region-of-interest. If set, the output slice
-        // dims shrink to the region. (The region is expressed in
-        // *downsampled* tile-local coords if K > 0; callers translate
-        // before passing.) For K == 0 and ROI nil, this collapses to
-        // identity = the current behaviour.
+        // dims shrink to the region. v10.22 — region is now in FULL
+        // tile-local coords regardless of K (matches v10.6/v10.8/v10.21
+        // bridge SPI convention). When K > 0, the per-slice 2D codec's
+        // partial-res output is at the reduced grid, AND the bridge SPI
+        // maps the full-coords region onto that reduced grid via
+        // `region / 2^K` (with ceil-up width/height + clamp) before
+        // cropping. So `outTileWidth/outTileHeight` here track the
+        // POST-crop dims = `roi_width / 2^K`.
         let outTileWidth: Int
         let outTileHeight: Int
         let regionXLower: Int
         let regionYLower: Int
         if let roi = regionOfInterest {
-            outTileWidth = roi.xRange.count
-            outTileHeight = roi.yRange.count
+            if K > 0 {
+                let f = 1 << K
+                outTileWidth = max(1, (roi.xRange.count + f - 1) / f)
+                outTileHeight = max(1, (roi.yRange.count + f - 1) / f)
+            } else {
+                outTileWidth = roi.xRange.count
+                outTileHeight = roi.yRange.count
+            }
             regionXLower = roi.xRange.lowerBound
             regionYLower = roi.yRange.lowerBound
         } else {
@@ -483,10 +493,16 @@ struct JP3DSliceStackCodec: Sendable {
         //      iDWTs land (the residual is a cheap Int32 add but has
         //      the cross-slice dependency that prevents batching).
         //
-        // The single combination still routed per-slice is
-        // `K > 0 AND regionOfInterest != nil` — the throw above
-        // already gates that out (the 2D codec doesn't compose
-        // partial-res with ROI; it's a Phase 5 future task).
+        // v10.22-research Phase 1 — K>0 + ROI composition now also
+        // routes through batched bridge. The v10.21 batched bridge
+        // orchestrator already composes both: chain truncation to
+        // `effectiveLevels = N − K` + per-slice post-iDWT crop to
+        // the ROI (verified by V10_21_BatchedBridgeOptionsParityTests
+        // `testBatchedBridgeWithPartialResolutionAndROI_4Slices_256x256`).
+        // The JP3DSliceStackCodec convention is that when K>0 the
+        // ROI is expressed in downsampled tile-local coords, which
+        // matches what the bridge's crop expects after partial-res
+        // iDWT — no coordinate translation needed at this layer.
         //
         // v10.20-research Phase 4 — env-var off-switch for A/B benching.
         // `J2K_JP3D_BATCHED_BRIDGE=0` disables the bulk batched path,
@@ -500,10 +516,10 @@ struct JP3DSliceStackCodec: Sendable {
             }
             return false
         }()
-        // The (K>0, ROI) case is excluded by the throw upstream; here
-        // we only need to gate on the env-var off-switch.
+        // v10.22 — batched bridge now covers all four cells of the
+        // {K, ROI} matrix. The only remaining per-slice case is the
+        // env-var opt-out.
         let useBatchedBridge = !batchedOptedOut
-            && !(regionOfInterest != nil && K > 0)
         var batchedImages: [J2KImage]? = nil
         if useBatchedBridge {
             // For K>0 we need the per-slice 2D codec's decomposition-
@@ -569,33 +585,32 @@ struct JP3DSliceStackCodec: Sendable {
             )
 
             // v10.18 — route through decodeResolution / decodeRegion
-            // as appropriate. Four combinations (composition order:
-            // ROI ⊕ resolutionLevel for clarity):
-            //
-            //   (K=0, no ROI) → decoder.decode             (current)
-            //                   v10.20 Phase 3c: served from batchedImages
-            //   (K=0,    ROI) → decoder.decodeRegion       (Phase 3)
-            //   (K>0, no ROI) → decoder.decodeResolution   (Phase 2)
-            //   (K>0,    ROI) → decoder.decodeRegion       (Phase 2+3)
-            //                   then partial-res must be expressed
-            //                   inside the J2KROIDecodingOptions —
-            //                   currently the 2D ROI path always
-            //                   decodes at full resolution. Falls back
-            //                   to (K=0, ROI) for safety and the
-            //                   tile-output dims must therefore be in
-            //                   FULL tile coords; assert K == 0 when
-            //                   ROI is set (the JP3DROIDecoder caller
-            //                   today never combines them, and the
-            //                   composition is a Phase 5 wiring task).
-            if regionOfInterest != nil && K > 0 {
-                throw J2KError.decodingError(
-                    "JP3D slice-stack: combining resolutionLevel > 0 with "
-                    + "regionOfInterest is not yet supported. v10.18 Phase 5 "
-                    + "is the wiring task.")
-            }
+            // as appropriate. v10.20-Phase-3c moved the (K=0, no ROI)
+            // case onto the batched bridge; v10.21 moved (K=0, ROI)
+            // and (K>0, no ROI); v10.22 closes the matrix by adding
+            // (K>0, ROI). All four cells now route through
+            // `batchedImages` unless the env-var off-switch is set.
+            // The per-slice branches below remain as the off-switch
+            // fallback only — they execute when
+            // `J2K_JP3D_BATCHED_BRIDGE=0`.
             let image: J2KImage
             if let batched = batchedImages {
                 image = batched[z - zStart]
+            } else if let roi = regionOfInterest, K > 0 {
+                // v10.22 — env-var off-switch case for K>0 + ROI.
+                // Route per-slice through decodePartial, which composes
+                // partial-res + ROI at the 2D codec level (v10.8).
+                if perSliceDecompLevels == nil {
+                    perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
+                }
+                let N = perSliceDecompLevels ?? 0
+                let sliceLevel = max(0, N - K)
+                let opts = J2KPartialDecodingOptions(
+                    maxResolutionLevel: sliceLevel,
+                    region: J2KRegion(
+                        x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
+                        width: roi.xRange.count, height: roi.yRange.count))
+                image = try await decoder.decodePartial(codestream, options: opts)
             } else if let roi = regionOfInterest {
                 let opts = J2KROIDecodingOptions(
                     region: J2KRegion(

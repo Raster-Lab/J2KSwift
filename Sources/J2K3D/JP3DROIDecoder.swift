@@ -99,29 +99,13 @@ public actor JP3DROIDecoder {
         let codestream = try parser.parse(data)
         let siz = codestream.siz
 
-        // v10.18-research Phase 5 — fail-loud on the unsupported
-        // combination of resolutionLevel > 0 + sub-region. The full-
-        // volume case (handled below via JP3DDecoder delegation) still
-        // honours resolutionLevel because there's no per-tile cropping.
-        if configuration.resolutionLevel > 0 {
-            let isFullVolumeRequest = (
-                requestedRegion.x.lowerBound <= 0 &&
-                requestedRegion.x.upperBound >= siz.width &&
-                requestedRegion.y.lowerBound <= 0 &&
-                requestedRegion.y.upperBound >= siz.height &&
-                requestedRegion.z.lowerBound <= 0 &&
-                requestedRegion.z.upperBound >= siz.depth)
-            if !isFullVolumeRequest {
-                throw J2KError.decodingError(
-                    "JP3DROIDecoder: combining configuration.resolutionLevel > 0 "
-                    + "with a sub-region is not yet supported. "
-                    + "v10.18 Phase 5 wiring task. "
-                    + "Until then, use either JP3DDecoder(configuration: ...) "
-                    + "for partial-resolution decode, OR "
-                    + "JP3DROIDecoder() (default config) for ROI decode — "
-                    + "not both together.")
-            }
-        }
+        // v10.22-research — resolutionLevel + sub-region composition
+        // is now supported via the batched bridge. JP3DSliceStackCodec
+        // (Phase 5 wiring) routes K>0 + ROI through the v10.21
+        // bridge SPI's K+ROI-aware orchestrator, which truncates the
+        // iDWT chain AND crops the per-slice output to the
+        // downsampled-coord ROI. The v10.18 fail-loud throw is gone;
+        // the per-tile coord translation runs below.
 
         // Clamp the requested region to valid volume bounds
         let clampedXLower = max(0, requestedRegion.x.lowerBound)
@@ -193,8 +177,20 @@ public actor JP3DROIDecoder {
             tilesByIndex[linearIndex] = tile
         }
 
+        // v10.22 — when configuration.resolutionLevel > 0 the output
+        // sub-volume's XY dims are downsampled by 2^K relative to the
+        // user-passed ROI (Z is per-slice, not affected). The output
+        // buffer sizing + per-tile composite below switch to
+        // downsampled coords accordingly. Z stays full because JP3D's
+        // K is a 2D-only halving (Z residual chain is per-slice).
+        let K = configuration.resolutionLevel
+        let f = K > 0 ? (1 << K) : 1
+        let roiW_out = K > 0 ? (roiW + f - 1) / f : roiW
+        let roiH_out = K > 0 ? (roiH + f - 1) / f : roiH
+        let roiD_out = roiD
+
         // Allocate output ROI buffers
-        let roiVoxels = roiW * roiH * roiD
+        let roiVoxels = roiW_out * roiH_out * roiD_out
         var roiBuffers = [[Float]](
             repeating: [Float](repeating: 0, count: roiVoxels),
             count: siz.componentCount
@@ -259,16 +255,24 @@ public actor JP3DROIDecoder {
                 )
             }
 
+            // v10.22 — JP3DSliceStackCodec now treats `regionOfInterest`
+            // in FULL tile-local coords (post-K mapping happens inside
+            // the bridge SPI). No translation needed here.
             let inTileXRange = inTileXLower..<inTileXUpper
             let inTileYRange = inTileYLower..<inTileYUpper
-            let regionW = inTileXRange.count
-            let regionH = inTileYRange.count
+            // regionW_full / regionH_full track the FULL-coords in-tile
+            // region (what we pass to JP3DSliceStackCodec); regionW /
+            // regionH track the DOWNSAMPLED per-slice buffer shape
+            // (what the slice-stack actually returns when K>0).
+            let regionW_full = inTileXRange.count
+            let regionH_full = inTileYRange.count
+            let regionW = K > 0 ? (regionW_full + f - 1) / f : regionW_full
+            let regionH = K > 0 ? (regionH_full + f - 1) / f : regionH_full
 
             // Phase 3 fast path only fires when the in-tile region is
-            // strictly smaller than the tile (otherwise the full-tile
-            // decode is identical and bypasses the codec's region-
-            // setup overhead).
-            let useRegionPath = (regionW < tw || regionH < th)
+            // strictly smaller than the tile (full coords). When K>0
+            // the slice-stack will still downsample internally.
+            let useRegionPath = (regionW_full < tw || regionH_full < th)
 
             // v10.18-research Phase 5 — wire JP3DDecoderConfiguration.
             // resolutionLevel through to the slice-stack codec. When
@@ -340,40 +344,79 @@ public actor JP3DROIDecoder {
                 _ = returnedSliceCount  // bounded by the loop below
 
                 if useRegionPath {
+                    // v10.22 — composite at DOWNSAMPLED XY coords when
+                    // K>0. The slice-stack returns the per-slice buffer
+                    // sized for the downsampled-in-tile region, so
+                    // src strides and dst offsets are both at the
+                    // reduced scale. Z stays full (per-slice).
                     let srcSliceVoxels = regionW * regionH
+                    // In-tile lower bound in downsampled coords; the
+                    // dst-base accounts for the clampedX/Y lower bound
+                    // also being downsampled (since roiBuffers is
+                    // downsampled-sized).
+                    let inTileXLowerDown = K > 0
+                        ? inTileXRange.lowerBound / f
+                        : inTileXRange.lowerBound
+                    let inTileYLowerDown = K > 0
+                        ? inTileYRange.lowerBound / f
+                        : inTileYRange.lowerBound
+                    let x0Down = K > 0 ? x0 / f : x0
+                    let y0Down = K > 0 ? y0 / f : y0
+                    let clampedXLowerDown = K > 0
+                        ? clampedX.lowerBound / f
+                        : clampedX.lowerBound
+                    let clampedYLowerDown = K > 0
+                        ? clampedY.lowerBound / f
+                        : clampedY.lowerBound
                     for z in intZ0..<intZ1 {
-                        let srcZ = (z - z0) - inTileZLower  // tile-local then z-range-local
+                        let srcZ = (z - z0) - inTileZLower
                         let dstZ = z - clampedZ.lowerBound
                         let srcRowOffset = srcZ * srcSliceVoxels
                         for ry in 0..<regionH {
-                            let dstY = (y0 + inTileYRange.lowerBound + ry) - clampedY.lowerBound
+                            let dstY = (y0Down + inTileYLowerDown + ry) - clampedYLowerDown
                             let srcRow = srcRowOffset + ry * regionW
-                            let dstRow = dstZ * roiW * roiH + dstY * roiW
+                            let dstRow = dstZ * roiW_out * roiH_out + dstY * roiW_out
                             for rx in 0..<regionW {
-                                let dstX = (x0 + inTileXRange.lowerBound + rx) - clampedX.lowerBound
-                                roiBuffers[comp][dstRow + dstX] = floatCoeffs[srcRow + rx]
+                                let dstX = (x0Down + inTileXLowerDown + rx) - clampedXLowerDown
+                                let dstIdx = dstRow + dstX
+                                let srcIdx = srcRow + rx
+                                if srcIdx < floatCoeffs.count && dstIdx < roiVoxels {
+                                    roiBuffers[comp][dstIdx] = floatCoeffs[srcIdx]
+                                }
                             }
                         }
                     }
                 } else {
                     // Whole-tile XY decode + intersection-crop (tile
                     // is entirely inside ROI in XY). Z range is the
-                    // narrowed one.
+                    // narrowed one. v10.22 — also K-aware: the slice-
+                    // stack returned a downsampled-tile buffer when K>0,
+                    // so iterate at downsampled stride.
+                    let twDown = K > 0 ? (tw + f - 1) / f : tw
+                    let thDown = K > 0 ? (th + f - 1) / f : th
                     let intX0 = max(x0, clampedX.lowerBound)
                     let intY0 = max(y0, clampedY.lowerBound)
                     let intX1 = min(x0 + tw, clampedX.upperBound)
                     let intY1 = min(y0 + th, clampedY.upperBound)
+                    let intX0Down = K > 0 ? intX0 / f : intX0
+                    let intY0Down = K > 0 ? intY0 / f : intY0
+                    let intX1Down = K > 0 ? (intX1 + f - 1) / f : intX1
+                    let intY1Down = K > 0 ? (intY1 + f - 1) / f : intY1
+                    let x0Down = K > 0 ? x0 / f : x0
+                    let y0Down = K > 0 ? y0 / f : y0
+                    let clampedXLowerDown = K > 0 ? clampedX.lowerBound / f : clampedX.lowerBound
+                    let clampedYLowerDown = K > 0 ? clampedY.lowerBound / f : clampedY.lowerBound
                     for z in intZ0..<intZ1 {
                         let srcZ = (z - z0) - inTileZLower
-                        for y in intY0..<intY1 {
-                            for x in intX0..<intX1 {
-                                let srcX = x - x0
-                                let srcY = y - y0
-                                let srcIdx = srcZ * tw * th + srcY * tw + srcX
-                                let dstX = x - clampedX.lowerBound
-                                let dstY = y - clampedY.lowerBound
+                        for y in intY0Down..<intY1Down {
+                            for x in intX0Down..<intX1Down {
+                                let srcX = x - x0Down
+                                let srcY = y - y0Down
+                                let srcIdx = srcZ * twDown * thDown + srcY * twDown + srcX
+                                let dstX = x - clampedXLowerDown
+                                let dstY = y - clampedYLowerDown
                                 let dstZ = z - clampedZ.lowerBound
-                                let dstIdx = dstZ * roiW * roiH + dstY * roiW + dstX
+                                let dstIdx = dstZ * roiW_out * roiH_out + dstY * roiW_out + dstX
                                 if srcIdx < floatCoeffs.count && dstIdx < roiVoxels {
                                     roiBuffers[comp][dstIdx] = floatCoeffs[srcIdx]
                                 }
@@ -386,12 +429,13 @@ public actor JP3DROIDecoder {
             tilesDecoded += 1
         }
 
-        // Assemble ROI sub-volume
+        // v10.22 — output volume uses downsampled XY dims when K>0.
         let volumeComponents = assembleROIComponents(
-            from: roiBuffers, siz: siz, roiW: roiW, roiH: roiH, roiD: roiD
+            from: roiBuffers, siz: siz,
+            roiW: roiW_out, roiH: roiH_out, roiD: roiD_out
         )
 
-        let volume = J2KVolume(width: roiW, height: roiH, depth: roiD, components: volumeComponents)
+        let volume = J2KVolume(width: roiW_out, height: roiH_out, depth: roiD_out, components: volumeComponents)
 
         return JP3DROIDecoderResult(
             volume: volume,

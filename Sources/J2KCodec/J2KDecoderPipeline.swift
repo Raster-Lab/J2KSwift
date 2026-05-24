@@ -1821,7 +1821,24 @@ struct DecoderPipeline: Sendable {
             let image = try reconstructImage(spatialData,
                                              metadata: slice.metadata)
             if let roi = headOptions.regionOfInterest {
-                results.append(try Self.cropImage(image, region: roi))
+                // v10.22 — full-coords ROI mapped onto the reduced
+                // grid when partial-res is active. Same formula as
+                // the serial bridge SPI's finalize crop, mirrored
+                // from J2KAdvancedDecoding.swift:528-543.
+                let f = JP3DSliceCoefficients.reducedFactor(
+                    level: headOptions.partialResolutionLevel,
+                    N: slice.metadata.configuration.decompositionLevels)
+                let mapped: J2KRegion
+                if f == 1 {
+                    mapped = roi
+                } else {
+                    let rx = min(roi.x / f, max(0, image.width - 1))
+                    let ry = min(roi.y / f, max(0, image.height - 1))
+                    let rw = max(1, min((roi.width + f - 1) / f, image.width - rx))
+                    let rh = max(1, min((roi.height + f - 1) / f, image.height - ry))
+                    mapped = J2KRegion(x: rx, y: ry, width: rw, height: rh)
+                }
+                results.append(try Self.cropImage(image, region: mapped))
             } else {
                 results.append(image)
             }
@@ -1885,7 +1902,25 @@ struct DecoderPipeline: Sendable {
 
         let fullImage = try reconstructImage(rgbData, metadata: metadata)
         if let roi = coefs.options.regionOfInterest {
-            return try Self.cropImage(fullImage, region: roi)
+            // v10.22 — ROI in full-image coords; map onto reduced
+            // grid when partial-res is also active. Mirror
+            // decodePartial's mapping (J2KAdvancedDecoding.swift:528-543):
+            // `factor = 2^(N - partialResolutionLevel)`, region/f
+            // with ceil-up width/height + clamping.
+            let f = JP3DSliceCoefficients.reducedFactor(
+                level: coefs.options.partialResolutionLevel,
+                N: metadata.configuration.decompositionLevels)
+            let mapped: J2KRegion
+            if f == 1 {
+                mapped = roi
+            } else {
+                let rx = min(roi.x / f, max(0, fullImage.width - 1))
+                let ry = min(roi.y / f, max(0, fullImage.height - 1))
+                let rw = max(1, min((roi.width + f - 1) / f, fullImage.width - rx))
+                let rh = max(1, min((roi.height + f - 1) / f, fullImage.height - ry))
+                mapped = J2KRegion(x: rx, y: ry, width: rw, height: rh)
+            }
+            return try Self.cropImage(fullImage, region: mapped)
         }
         return fullImage
     }

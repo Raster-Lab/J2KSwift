@@ -200,12 +200,19 @@ final class V10_21_BatchedBridgeOptionsParityTests: XCTestCase {
 
     // MARK: - Composition parity (partial-res + ROI)
 
-    /// 4-slice batch with BOTH partial-res K=4 AND ROI inside the
-    /// reduced grid. Batched ≡ per-slice serial; output dims = ROI dims.
+    /// 4-slice batch with BOTH partial-res K=4 (in 2D codec terms,
+    /// i.e. 4 iDWT steps) AND a full-coords ROI. v10.22 convention:
+    /// ROI in `JP3DBridgeOptions` is full-image coords; the bridge
+    /// maps it onto the reduced grid via `region / 2^(N-K)` before
+    /// cropping. For partialResolutionLevel=4 with N=5, factor = 2,
+    /// so full ROI(32, 32, 128, 128) → reduced ROI(16, 16, 64, 64)
+    /// → output 64×64.
     func testBatchedBridgeWithPartialResolutionAndROI_4Slices_256x256() async throws {
         let decoder = J2KDecoder()
-        // K=4 reduces 256→128; ROI inside the 128×128 reduced grid.
-        let region = J2KRegion(x: 16, y: 16, width: 64, height: 64)
+        // Full-coords ROI within 256×256. With K=4 (1 iDWT step short
+        // of full), 2D output is 128×128. Region maps to reduced grid
+        // via factor = 2^(5-4) = 2.
+        let region = J2KRegion(x: 32, y: 32, width: 128, height: 128)
         let opts = JP3DBridgeOptions(
             partialResolutionLevel: 4, regionOfInterest: region)
         var coefsArr: [JP3DSliceCoefficients] = []
@@ -220,11 +227,13 @@ final class V10_21_BatchedBridgeOptionsParityTests: XCTestCase {
         let batched = try await decoder._jp3dIDWTAndFinalizeBatched(coefsArr)
         XCTAssertEqual(batched.count, 4)
         for s in 0..<4 {
+            // Reduced output: 128×128. ROI mapped: x=16, y=16,
+            // w=64, h=64. → output 64×64.
             XCTAssertEqual(batched[s].width, 64)
             XCTAssertEqual(batched[s].height, 64)
             XCTAssertEqual(serials[s].components.first?.data,
                            batched[s].components.first?.data,
-                           "Batched bridge (K=4 + ROI 64²) slice \(s) diverges from serial")
+                           "Batched bridge (K=4 + full-coords ROI) slice \(s) diverges from serial")
         }
     }
 

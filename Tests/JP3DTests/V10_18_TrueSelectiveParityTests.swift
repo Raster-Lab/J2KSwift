@@ -356,29 +356,50 @@ final class V10_18_TrueSelectiveParityTests: XCTestCase {
         }
     }
 
-    /// Composition tripwire — combining `resolutionLevel > 0` with a
-    /// ROI decoder is the Phase 5 future-work case. JP3DSliceStackCodec
-    /// throws today rather than silently producing wrong output. When
-    /// Phase 5 wires the combination through, this test will start
-    /// passing the (currently absent) success branch — at that point
-    /// invert the assertion to check the combined output instead.
-    func testCombinedResolutionLevelAndROIIsPhase5Future() async throws {
+    /// v10.22-research Phase 1 — composition success path.
+    /// **Specification**: `JP3DROIDecoder(configuration: cfg).decode(_, region:)`
+    /// with `cfg.resolutionLevel = K, K > 0` produces a sub-volume
+    /// whose voxels equal a full partial-resolution decode (at level K)
+    /// cropped to the region mapped onto the reduced grid. v10.22 wires
+    /// this through the v10.21 batched bridge SPI's K+ROI orchestrator
+    /// (chain truncation + per-slice post-iDWT crop at reduced coords).
+    func testCombinedResolutionLevelAndROI() async throws {
         let volume = makeLCGVolume(width: 64, height: 64, depth: 8)
         let codestream = try await encodeLossless(volume)
 
         let cfg = JP3DDecoderConfiguration(resolutionLevel: 1)
-        let region = JP3DRegion(x: 16..<48, y: 16..<48, z: 0..<4)
+        // Full partial-res decode (K=1 ⇒ output 32×32×8) as the oracle.
+        let fullPartial = try await JP3DDecoder(configuration: cfg).decode(codestream).volume
 
-        do {
-            _ = try await JP3DROIDecoder(configuration: cfg).decode(
-                codestream, region: region)
-            XCTFail("Phase 5 has landed — invert this assertion to verify "
-                    + "the combined output instead.")
-        } catch {
-            // Expected today: JP3DSliceStackCodec.decode throws when
-            // both resolutionLevel > 0 AND regionOfInterest are set.
-            // The check happens per-tile during the ROI decode, so we
-            // accept any error here.
+        // Sub-region of the full image (full coords). The downsampled
+        // sub-volume should match `fullPartial` cropped to the
+        // downsampled sub-region.
+        let region = JP3DRegion(x: 16..<48, y: 16..<48, z: 0..<4)
+        let combined = try await JP3DROIDecoder(configuration: cfg)
+            .decode(codestream, region: region).volume
+
+        // Per the K=1 convention, the downsampled region in `fullPartial`
+        // coords is x: 8..<24, y: 8..<24 (region / 2 each side).
+        let dRegionX = (region.x.lowerBound >> 1)..<((region.x.upperBound + 1) >> 1)
+        let dRegionY = (region.y.lowerBound >> 1)..<((region.y.upperBound + 1) >> 1)
+        XCTAssertEqual(combined.width,  dRegionX.count)
+        XCTAssertEqual(combined.height, dRegionY.count)
+        XCTAssertEqual(combined.depth,  region.z.count)
+
+        for (zi, z) in region.z.enumerated() {
+            for (yi, y) in dRegionY.enumerated() {
+                for (xi, x) in dRegionX.enumerated() {
+                    let want = voxelValue(in: fullPartial, x: x, y: y, z: z)
+                    let got  = voxelValue(in: combined, x: xi, y: yi, z: zi)
+                    if want != got {
+                        XCTFail("K+ROI voxel mismatch at "
+                                + "fullPartial(\(x),\(y),\(z)) "
+                                + "combined(\(xi),\(yi),\(zi)): "
+                                + "want=\(want) got=\(got)")
+                        return
+                    }
+                }
+            }
         }
     }
 }
