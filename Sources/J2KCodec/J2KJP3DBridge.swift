@@ -64,10 +64,18 @@ public struct JP3DBridgeOptions: Sendable, Equatable {
     /// LL only (thumbnail).
     public let partialResolutionLevel: Int?
 
-    /// Region of interest. `nil` = full image. When set, the iDWT
-    /// still runs full-tile but the finalize stage crops to the
-    /// region (Stage 1 footprint-skip + Stage 2 tile-skip both
-    /// engage upstream of the bridge SPI's iDWT).
+    /// Region of interest in **full-image coordinates** (the same
+    /// convention as v10.6 `decodeRegion` / v10.8 `decodePartial`).
+    /// `nil` = full image. When set:
+    ///   • Entropy stage uses the v10.6 footprint-skip block filter
+    ///     (`extractTileData`'s `regionOfInterest`); the filter
+    ///     expects full-image coords for the block-rect overlap check.
+    ///   • Finalize crops the per-slice output to the region. When
+    ///     `partialResolutionLevel` is ALSO set, the bridge maps the
+    ///     full-coords region onto the reduced grid via
+    ///     `region / 2^(N − partialResolutionLevel)` before cropping
+    ///     (mirrors the `decodePartial` crop-on-reduced-grid logic in
+    ///     J2KAdvancedDecoding.swift:528-543).
     public let regionOfInterest: J2KRegion?
 
     public init(
@@ -119,33 +127,58 @@ public struct JP3DSliceCoefficients: @unchecked Sendable {
 
     /// Pixel dimensions of the slice this coefficients bundle will
     /// produce after iDWT + reconstruction. Reflects the captured
-    /// `JP3DBridgeOptions`: partial-resolution shrinks the dims;
-    /// ROI shrinks the dims to the region; full decode returns
-    /// `metadata.width × metadata.height`. Useful for the JP3D
-    /// caller's output-buffer sizing before iDWT runs.
+    /// `JP3DBridgeOptions`:
+    ///   • full decode (no options): `metadata.width × metadata.height`
+    ///   • partial-res K=L only: `ceil(W / 2^(N-L)) × ceil(H / 2^(N-L))`
+    ///   • ROI only: `roi.width × roi.height`
+    ///   • partial-res + ROI: ROI mapped onto reduced grid via
+    ///     `ceil(roi.width / 2^(N-L))` (matches `decodePartial`'s
+    ///     crop-on-reduced-grid logic).
+    /// Useful for the JP3D caller's output-buffer sizing before
+    /// iDWT runs.
     public var width: Int {
-        if let roi = _internal.options.regionOfInterest {
-            return roi.width
-        }
-        if let level = _internal.options.partialResolutionLevel {
-            let N = _internal.metadata.configuration.decompositionLevels
-            let halvings = max(0, N - max(0, min(level, N)))
-            let factor = 1 << halvings
-            return (_internal.metadata.width + factor - 1) / factor
-        }
-        return _internal.metadata.width
+        let mw = _internal.metadata.width
+        let factor = Self.reducedFactor(
+            level: _internal.options.partialResolutionLevel,
+            N: _internal.metadata.configuration.decompositionLevels)
+        let baseW = (mw + factor - 1) / factor
+        guard let roi = _internal.options.regionOfInterest else { return baseW }
+        if factor == 1 { return roi.width }
+        return Self.mappedRegionWidth(roi: roi, factor: factor, base: baseW)
     }
     public var height: Int {
-        if let roi = _internal.options.regionOfInterest {
-            return roi.height
-        }
-        if let level = _internal.options.partialResolutionLevel {
-            let N = _internal.metadata.configuration.decompositionLevels
-            let halvings = max(0, N - max(0, min(level, N)))
-            let factor = 1 << halvings
-            return (_internal.metadata.height + factor - 1) / factor
-        }
-        return _internal.metadata.height
+        let mh = _internal.metadata.height
+        let factor = Self.reducedFactor(
+            level: _internal.options.partialResolutionLevel,
+            N: _internal.metadata.configuration.decompositionLevels)
+        let baseH = (mh + factor - 1) / factor
+        guard let roi = _internal.options.regionOfInterest else { return baseH }
+        if factor == 1 { return roi.height }
+        return Self.mappedRegionHeight(roi: roi, factor: factor, base: baseH)
+    }
+
+    /// Reduced-grid downsample factor for a given partialResolutionLevel.
+    /// Matches `decodePartial`'s `resolutionFactor = 1 << (levels - level)`.
+    @usableFromInline
+    static func reducedFactor(level: Int?, N: Int) -> Int {
+        guard let l = level, l >= 0, l < N else { return 1 }
+        return 1 << (N - l)
+    }
+
+    /// Maps a full-coords ROI's x-extent onto the reduced grid via
+    /// the same formula `decodePartial` uses
+    /// (J2KAdvancedDecoding.swift:536-540): `x/f`, ceil-up width.
+    @usableFromInline
+    static func mappedRegionWidth(roi: J2KRegion, factor f: Int, base: Int) -> Int {
+        let rx = min(roi.x / f, max(0, base - 1))
+        let rw = max(1, min((roi.width + f - 1) / f, base - rx))
+        return rw
+    }
+    @usableFromInline
+    static func mappedRegionHeight(roi: J2KRegion, factor f: Int, base: Int) -> Int {
+        let ry = min(roi.y / f, max(0, base - 1))
+        let rh = max(1, min((roi.height + f - 1) / f, base - ry))
+        return rh
     }
 }
 
