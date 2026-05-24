@@ -187,68 +187,86 @@ struct JP3DSliceStackCodec: Sendable {
         var tileTryBothActive = probedZDelta
         var tileSignedOnlyActive = false
 
-        for z in 0..<tile.depth {
-            // Fast path: tile committed to signed-only after seeing
-            // huge savings on slice 1. Encode just the residual,
-            // falling back to raw only when the bit-depth signed
-            // range overflows on this particular slice.
-            if tileSignedOnlyActive && z > 0 {
-                if let candidate = computeResidualCandidate(
-                    currentZ: z, previousZ: z - 1, in: tile) {
-                    let signedImage = makeSignedImage(
-                        from: candidate.perComponent, in: tile)
-                    let signedCS = try await signedEncoder.encode(signedImage)
-                    slicePayloads.append((Self.sliceFlagIsResidual, signedCS))
-                    continue
-                }
-                // Residual overflowed — must fall through to raw for
-                // this slice. The next slice still tries the residual
-                // path; tileSignedOnlyActive is preserved.
+        // v10.23-research — sequential probe for slices 0..1 to commit
+        // the tile-mode decision (`tileTryBothActive` /
+        // `tileSignedOnlyActive` from the empirical first-slice
+        // savings measurement). Slices 2..N have no further mode
+        // changes to make, so they encode in parallel via TaskGroup.
+        // The per-slice 2D J2K encode is by far the dominant cost
+        // (~8-9 ms/slice on M2 release for 512² CT slices), so the
+        // parallelism wins ~Nx-cores speedup on the slice-tail.
+        //
+        // Z-delta correctness: the residual `slice_z - slice_{z-1}`
+        // depends only on the raw input bytes (`TileVoxels`), NOT on
+        // the encoded codestream of slice z-1. Slices can encode in
+        // parallel without breaking the residual chain.
+        //
+        // Off-switch: `J2K_JP3D_PARALLEL_ENCODE=0` forces the legacy
+        // serial loop for A/B benching.
+        let parallelOptedOut: Bool = {
+            if let v = ProcessInfo.processInfo
+                .environment["J2K_JP3D_PARALLEL_ENCODE"] {
+                return v == "0" || v.lowercased() == "false" || v.lowercased() == "no"
             }
+            return false
+        }()
 
-            // Per-slice gating when try-both is active:
-            //   1) Allocation-free probe (`probeResidualLooksGood`)
-            //      keeps natural-medical slices that won't benefit
-            //      out of the heavyweight path.
-            //   2) Only when tier 1 passes does
-            //      `computeResidualCandidate` allocate the residual
-            //      buffer — skipping tier 1 would burn ~1.5 ms per
-            //      slice on natural MR even when residual is rejected.
-            var candidate: ResidualCandidate? = nil
-            if tileTryBothActive && z > 0
-               && probeResidualLooksGood(currentZ: z, previousZ: z - 1, in: tile) {
-                candidate = computeResidualCandidate(
-                    currentZ: z, previousZ: z - 1, in: tile)
-            }
-
-            let rawImage = makeUnsignedImage(forSlice: z, in: tile)
-            let rawCS = try await unsignedEncoder.encode(rawImage)
-
-            var bestFlags: UInt8 = 0
-            var bestCS = rawCS
-            var measuredSavings: Double = 0.0
-
-            if let candidate {
-                let signedImage = makeSignedImage(from: candidate.perComponent, in: tile)
-                let signedCS = try await signedEncoder.encode(signedImage)
-                if signedCS.count < bestCS.count {
-                    measuredSavings = Double(rawCS.count - signedCS.count) / Double(rawCS.count)
-                    bestCS = signedCS
-                    bestFlags |= Self.sliceFlagIsResidual
-                }
-            }
-
-            slicePayloads.append((bestFlags, bestCS))
+        let sequentialUpTo = parallelOptedOut ? tile.depth : min(2, tile.depth)
+        for z in 0..<sequentialUpTo {
+            let (flags, data, savings) = try await encodeOneSlice(
+                z: z, in: tile,
+                tileSignedOnlyActive: tileSignedOnlyActive,
+                tileTryBothActive: tileTryBothActive,
+                unsignedEncoder: unsignedEncoder,
+                signedEncoder: signedEncoder)
+            slicePayloads.append((flags, data))
 
             // After the first slice that actually attempted try-both,
             // commit a tile-wide decision based on the empirical
             // savings (see thresholds above).
             if tileTryBothActive && z == 1 {
-                if measuredSavings >= signedOnlyThreshold {
+                if savings >= signedOnlyThreshold {
                     tileSignedOnlyActive = true
-                } else if measuredSavings < firstSliceSavingsThreshold {
+                } else if savings < firstSliceSavingsThreshold {
                     tileTryBothActive = false
                 }
+            }
+        }
+
+        if !parallelOptedOut && tile.depth > 2 {
+            let parallelStart = 2
+            let parallelCount = tile.depth - parallelStart
+            // Snapshot the committed tile-mode state; from slice 2
+            // onward neither flag mutates (line above), so capturing
+            // by value is safe.
+            let signedOnly = tileSignedOnlyActive
+            let tryBoth = tileTryBothActive
+            let raw = unsignedEncoder
+            let signed = signedEncoder
+            let codec = self
+            var parallelOut: [(flags: UInt8, data: Data)?] =
+                Array(repeating: nil, count: parallelCount)
+            try await withThrowingTaskGroup(
+                of: (Int, UInt8, Data).self
+            ) { group in
+                for z in parallelStart..<tile.depth {
+                    let captured = z
+                    group.addTask {
+                        let (f, d, _) = try await codec.encodeOneSlice(
+                            z: captured, in: tile,
+                            tileSignedOnlyActive: signedOnly,
+                            tileTryBothActive: tryBoth,
+                            unsignedEncoder: raw,
+                            signedEncoder: signed)
+                        return (captured, f, d)
+                    }
+                }
+                for try await (z, f, d) in group {
+                    parallelOut[z - parallelStart] = (f, d)
+                }
+            }
+            for p in parallelOut {
+                slicePayloads.append(p!)
             }
         }
 
@@ -915,6 +933,70 @@ struct JP3DSliceStackCodec: Sendable {
         }
 
         return ResidualCandidate(perComponent: perComponent)
+    }
+
+    /// v10.23-research — one-slice encode, refactored out of the
+    /// per-slice loop in `encode(...)` so the same body can run
+    /// sequentially (for slices 0-1 that commit the tile-mode
+    /// decision) and in parallel (for slices 2..N via TaskGroup).
+    ///
+    /// `tileSignedOnlyActive` / `tileTryBothActive` are snapshots of
+    /// the tile-mode decision committed at slice 1; the caller passes
+    /// them by value (they don't mutate after slice 1).
+    ///
+    /// Returns `(flags, encodedCodestream, measuredSavingsForZ1)`.
+    /// The savings field is only meaningful for `z == 1` when
+    /// `tileTryBothActive == true` — used by the caller to decide
+    /// whether to promote to `tileSignedOnlyActive` or demote to
+    /// raw-only for the rest of the slices.
+    private func encodeOneSlice(
+        z: Int, in tile: TileVoxels,
+        tileSignedOnlyActive: Bool,
+        tileTryBothActive: Bool,
+        unsignedEncoder: J2KEncoder,
+        signedEncoder: J2KEncoder
+    ) async throws -> (flags: UInt8, data: Data, measuredSavings: Double) {
+        // Fast path: tile committed to signed-only after seeing
+        // huge savings on slice 1. Encode just the residual,
+        // falling back to raw only when the bit-depth signed
+        // range overflows on this particular slice.
+        if tileSignedOnlyActive && z > 0 {
+            if let candidate = computeResidualCandidate(
+                currentZ: z, previousZ: z - 1, in: tile) {
+                let signedImage = makeSignedImage(
+                    from: candidate.perComponent, in: tile)
+                let signedCS = try await signedEncoder.encode(signedImage)
+                return (Self.sliceFlagIsResidual, signedCS, 0.0)
+            }
+            // Residual overflowed — fall through to raw for this slice.
+        }
+
+        // Per-slice gating when try-both is active.
+        var candidate: ResidualCandidate? = nil
+        if tileTryBothActive && z > 0
+           && probeResidualLooksGood(currentZ: z, previousZ: z - 1, in: tile) {
+            candidate = computeResidualCandidate(
+                currentZ: z, previousZ: z - 1, in: tile)
+        }
+
+        let rawImage = makeUnsignedImage(forSlice: z, in: tile)
+        let rawCS = try await unsignedEncoder.encode(rawImage)
+
+        var bestFlags: UInt8 = 0
+        var bestCS = rawCS
+        var measuredSavings: Double = 0.0
+
+        if let candidate {
+            let signedImage = makeSignedImage(from: candidate.perComponent, in: tile)
+            let signedCS = try await signedEncoder.encode(signedImage)
+            if signedCS.count < bestCS.count {
+                measuredSavings = Double(rawCS.count - signedCS.count) / Double(rawCS.count)
+                bestCS = signedCS
+                bestFlags |= Self.sliceFlagIsResidual
+            }
+        }
+
+        return (bestFlags, bestCS, measuredSavings)
     }
 
     private func makeUnsignedImage(forSlice z: Int, in tile: TileVoxels) -> J2KImage {
