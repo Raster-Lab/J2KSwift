@@ -1484,6 +1484,104 @@ struct DecoderPipeline: Sendable {
         }
     }
 
+    // MARK: - JP3D bridge SPI (v10.20-research Phase 1)
+    //
+    // Two new internal entry points that EXPOSE the pipeline split
+    // between dequantization and inverse-wavelet-transform without
+    // changing the production single-tile decode path. The composition
+    //
+    //     iDWTAndFinalizeCoefficients(decodeToCoefficients(data))
+    //
+    // is byte-identical to `decodeSingleTile(parseCodestream(data))`
+    // on every single-tile codestream — which is what JP3D's slice-
+    // stack codec emits for each Z-slice. The JP3D side then has the
+    // freedom to:
+    //
+    //  • decode N slices to coefficients (Stage A — entropy + dequant)
+    //  • submit ONE batched GPU iDWT dispatch across all N slices
+    //  • finalize each slice (Stage C — colour + DC + reconstruct)
+    //
+    // which is the structural shape Phase 2 needs. Phase 1 ships only
+    // the split — single-slice batched iDWT collapses to today's behaviour.
+
+    /// JP3D bridge — internal Phase 1 helper. Runs the single-tile
+    /// pipeline through Stage 4 (dequantization) and stops. Returns
+    /// the dequantized subbands + the codestream metadata so the
+    /// caller can later run iDWT + colour + DC + reconstruct via
+    /// `iDWTAndFinalizeCoefficients`.
+    ///
+    /// Multi-tile is rejected — JP3D slices are always single-tile
+    /// 2D J2K codestreams (per JP3DSliceStackCodec wire format).
+    /// Routing a multi-tile codestream through this bridge would
+    /// either need a per-tile-group decode or an explicit caller-
+    /// side multi-tile orchestration, both of which are out of scope.
+    mutating func decodeToCoefficients(
+        _ data: Data
+    ) async throws -> _JP3DSliceCoefficientsInternal {
+        let (metadata, tiles) = try parseCodestream(data)
+        guard !metadata.isMultiTile else {
+            throw J2KError.notImplemented(
+                "JP3D bridge: decodeToCoefficients does not yet "
+                + "support multi-tile codestreams (slice-stack slices "
+                + "are always single-tile).")
+        }
+        let tileData = tiles.first?.tileData ?? Data()
+
+        let codeBlocks = try extractTileData(
+            tileData, metadata: metadata,
+            maxResolutionLevel: partialResolutionLevel,
+            regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
+
+        let (decodedBlocks, _) = try await applyEntropyDecoding(
+            codeBlocks, metadata: metadata)
+
+        let dequantizedSubbands = try await applyDequantization(
+            decodedBlocks, metadata: metadata)
+
+        return _JP3DSliceCoefficientsInternal(
+            metadata: metadata,
+            dequantizedSubbands: dequantizedSubbands)
+    }
+
+    /// JP3D bridge — companion to `decodeToCoefficients`. Takes the
+    /// dequantized subbands previously produced by that method and
+    /// runs Stage 5 (iDWT) + Stage 6 (inverse colour transform) +
+    /// DC level unshift + Stage 7 (image reconstruction) to return
+    /// the final J2KImage.
+    ///
+    /// Bit-exact composition guarantee: for a single-tile codestream
+    /// `data`, the bytes of the returned image equal the bytes of
+    /// the image produced by the public `decode(data)`.
+    mutating func iDWTAndFinalizeCoefficients(
+        _ coefs: _JP3DSliceCoefficientsInternal
+    ) async throws -> J2KImage {
+        let metadata = coefs.metadata
+
+        var spatialData = try await applyInverseWaveletTransform(
+            coefs.dequantizedSubbands, metadata: metadata)
+
+        try applyInverseColorTransformInPlace(&spatialData, metadata: metadata)
+        var rgbData = spatialData
+
+        for (compIdx, compInfo) in metadata.components.enumerated() {
+            guard compIdx < rgbData.count else { break }
+            if !compInfo.signed {
+                var dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                rgbData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    #if canImport(Accelerate)
+                    vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset,
+                                buf.baseAddress!, 1, vDSP_Length(buf.count))
+                    #else
+                    for i in 0..<buf.count { buf[i] += dcOffset }
+                    #endif
+                }
+            }
+        }
+
+        return try reconstructImage(rgbData, metadata: metadata)
+    }
+
     private func decodeMultiTile(
         metadata: CodestreamMetadata,
         tiles: [(tileIndex: Int, tileData: Data)],
