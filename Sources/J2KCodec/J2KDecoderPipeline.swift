@@ -1518,6 +1518,29 @@ struct DecoderPipeline: Sendable {
     mutating func decodeToCoefficients(
         _ data: Data
     ) async throws -> _JP3DSliceCoefficientsInternal {
+        return try await decodeToCoefficients(data, options: .default)
+    }
+
+    /// v10.21-research — JP3D bridge SPI overload accepting options.
+    /// `options.partialResolutionLevel` truncates entropy + iDWT to
+    /// the target level (v10.5 Stage B); `options.regionOfInterest`
+    /// engages the v10.6 ROI footprint-skip. The captured options
+    /// ride along inside the returned payload so the matching
+    /// finalize call sizes / crops the output without re-plumbing
+    /// the same parameters.
+    mutating func decodeToCoefficients(
+        _ data: Data,
+        options: JP3DBridgeOptions
+    ) async throws -> _JP3DSliceCoefficientsInternal {
+        // Honour caller-passed options by setting the corresponding
+        // pipeline knobs (they may have been pre-set on `self` too —
+        // bridge SPI sets both; per-slice serial paths set on `self`).
+        if options.partialResolutionLevel != nil {
+            partialResolutionLevel = options.partialResolutionLevel
+        }
+        if options.regionOfInterest != nil {
+            regionOfInterest = options.regionOfInterest
+        }
         let (metadata, tiles) = try parseCodestream(data)
         guard !metadata.isMultiTile else {
             throw J2KError.notImplemented(
@@ -1541,7 +1564,8 @@ struct DecoderPipeline: Sendable {
 
         return _JP3DSliceCoefficientsInternal(
             metadata: metadata,
-            dequantizedSubbands: dequantizedSubbands)
+            dequantizedSubbands: dequantizedSubbands,
+            options: options)
     }
 
     /// v10.20-research Phase 3b — JP3D batched bridge SPI. Takes a
@@ -1589,9 +1613,9 @@ struct DecoderPipeline: Sendable {
         //   • 5/3 reversible filter
         //   • single-component slices (`componentCount == 1`)
         //   • uniform dimensions across the batch
-        //   • full-resolution decode (no `partialResolutionLevel`)
-        //   • no ROI
-        //   • ≥ 1 decomposition level
+        //   • uniform options across the batch (partial-res K + ROI)
+        //   • ≥ 1 effective iDWT level (K=0 thumbnail falls back —
+        //     no iDWT to dispatch in the first place)
         // Anything else falls back to the per-slice serial loop —
         // same output, no batched win, never errors on a valid
         // bundle.
@@ -1607,12 +1631,22 @@ struct DecoderPipeline: Sendable {
         let headW = head.metadata.width
         let headH = head.metadata.height
         let headComponentCount = head.metadata.componentCount
+        let headOptions = head.options
+
+        // v10.21-research Phase 2 — compute effectiveLevels from
+        // partial-resolution. K=N (or nil) → full chain; K ∈ [1, N-1]
+        // → truncated chain; K=0 → no iDWT to dispatch.
+        let effectiveLevels: Int = {
+            if let k = headOptions.partialResolutionLevel {
+                return max(0, min(k, levels))
+            }
+            return levels
+        }()
 
         var batchable = isReversible53
             && headComponentCount == 1
             && levels >= 1
-            && partialResolutionLevel == nil
-            && regionOfInterest == nil
+            && effectiveLevels >= 1
 
         if batchable {
             for slice in coefsBatch {
@@ -1627,6 +1661,15 @@ struct DecoderPipeline: Sendable {
                     break
                 }
                 if slice.metadata.configuration.decompositionLevels != levels {
+                    batchable = false
+                    break
+                }
+                // v10.21 — uniform options requirement. JP3D slice-
+                // stack guarantees the caller passes identical options
+                // to every slice (decodeRegion / decodeResolution are
+                // per-volume not per-slice), so this almost always
+                // holds; the check is defensive.
+                if slice.options != headOptions {
                     batchable = false
                     break
                 }
@@ -1662,6 +1705,14 @@ struct DecoderPipeline: Sendable {
         let llDimsW = levelSizes[levels].width
         let llDimsH = levelSizes[levels].height
 
+        // v10.21 — orchestrator output dims after `effectiveLevels`
+        // iDWT steps. For K=N (or .default): output = full image.
+        // For K<N: output = `levelSizes[N - K]` (the K-th level from
+        // the deepest, mirroring the v10.5 Stage B.2 truncation).
+        let outputLevel = levels - effectiveLevels
+        let outputW = levelSizes[outputLevel].width
+        let outputH = levelSizes[outputLevel].height
+
         var perSliceChains: [[J2KMetalDWTSubbandsInt32]] = []
         perSliceChains.reserveCapacity(coefsBatch.count)
 
@@ -1689,8 +1740,12 @@ struct DecoderPipeline: Sendable {
             }
 
             var chain: [J2KMetalDWTSubbandsInt32] = []
-            chain.reserveCapacity(levels)
-            for level in (1...levels).reversed() {
+            chain.reserveCapacity(effectiveLevels)
+            // v10.21 — only the deepest `effectiveLevels` levels run.
+            // The chain stops at `outputLevel + 1`, mirroring how
+            // `applyInverseWaveletTransform` truncates `levelSubbands53`
+            // to `prefix(effectiveLevels)`.
+            for level in ((outputLevel + 1)...levels).reversed() {
                 let parentW = levelSizes[level - 1].width
                 let parentH = levelSizes[level - 1].height
                 let llW = levelSizes[level].width
@@ -1731,7 +1786,17 @@ struct DecoderPipeline: Sendable {
         let perSliceFlatInt32 = try await metalDWT.inverse2DInt32MultiLevelFusedBatched(
             perSliceSubbandsPerLevel: perSliceChains)
 
+        // v10.21 — for partial-resolution we must set
+        // `outputDimensions` so `reconstructImage` sizes the per-
+        // slice J2KImage / J2KComponent at the truncated dims rather
+        // than the metadata's full dims. ROI is post-iDWT crop.
+        if headOptions.partialResolutionLevel != nil {
+            outputDimensions = (width: outputW, height: outputH)
+        }
+
         // Per-slice finalize: Int32 → Double → DC unshift → reconstruct.
+        // Output is full-image (or reduced-dim for partial-res); ROI
+        // crops at the end.
         var results: [J2KImage] = []
         results.reserveCapacity(coefsBatch.count)
         for (sIdx, slice) in coefsBatch.enumerated() {
@@ -1755,7 +1820,11 @@ struct DecoderPipeline: Sendable {
             }
             let image = try reconstructImage(spatialData,
                                              metadata: slice.metadata)
-            results.append(image)
+            if let roi = headOptions.regionOfInterest {
+                results.append(try Self.cropImage(image, region: roi))
+            } else {
+                results.append(image)
+            }
         }
         return results
     }
@@ -1773,6 +1842,25 @@ struct DecoderPipeline: Sendable {
         _ coefs: _JP3DSliceCoefficientsInternal
     ) async throws -> J2KImage {
         let metadata = coefs.metadata
+
+        // v10.21-research — honour captured options. For partial-
+        // resolution we must set `partialResolutionLevel` AND
+        // `outputDimensions` on this pipeline before `applyInverseWaveletTransform`
+        // / `reconstructImage` run; the CPU iDWT path reads
+        // `partialResolutionLevel` to truncate the chain, and
+        // `reconstructImage` reads `outputDimensions` to size the
+        // component buffers. ROI is post-iDWT crop (the iDWT itself
+        // runs full-tile; finalize crops at the end), so just stash
+        // the region for the post-step.
+        if let level = coefs.options.partialResolutionLevel {
+            partialResolutionLevel = level
+            let N = metadata.configuration.decompositionLevels
+            let halvings = max(0, N - max(0, min(level, N)))
+            let factor = 1 << halvings
+            let outW = (metadata.width + factor - 1) / factor
+            let outH = (metadata.height + factor - 1) / factor
+            outputDimensions = (width: outW, height: outH)
+        }
 
         var spatialData = try await applyInverseWaveletTransform(
             coefs.dequantizedSubbands, metadata: metadata)
@@ -1795,7 +1883,48 @@ struct DecoderPipeline: Sendable {
             }
         }
 
-        return try reconstructImage(rgbData, metadata: metadata)
+        let fullImage = try reconstructImage(rgbData, metadata: metadata)
+        if let roi = coefs.options.regionOfInterest {
+            return try Self.cropImage(fullImage, region: roi)
+        }
+        return fullImage
+    }
+
+    /// v10.21-research — per-component byte-level crop. Mirrors
+    /// `J2KDecoder.extractRegion` (private in J2KAdvancedDecoding)
+    /// so the JP3D bridge can produce region-sized images without
+    /// reaching into a sibling file's private. 1-byte and 2-byte
+    /// samples both supported; `sampleByteOrder` preserved.
+    static func cropImage(_ image: J2KImage, region: J2KRegion) throws -> J2KImage {
+        try region.validate(imageWidth: image.width, imageHeight: image.height)
+        let cropped = image.components.map { component -> J2KComponent in
+            let bytesPerSample = (component.bitDepth + 7) / 8
+            let srcStride = component.width
+            let dstRowBytes = region.width * bytesPerSample
+            var dst = Data(count: region.height * dstRowBytes)
+            component.data.withUnsafeBytes { srcRaw in
+                dst.withUnsafeMutableBytes { dstRaw in
+                    guard let src = srcRaw.baseAddress,
+                          let out = dstRaw.baseAddress else { return }
+                    for y in 0..<region.height {
+                        let srcY = region.y + y
+                        let srcOffset = (srcY * srcStride + region.x) * bytesPerSample
+                        let dstOffset = y * dstRowBytes
+                        memcpy(out + dstOffset, src + srcOffset, dstRowBytes)
+                    }
+                }
+            }
+            return J2KComponent(
+                index: component.index, bitDepth: component.bitDepth,
+                signed: component.signed,
+                width: region.width, height: region.height,
+                subsamplingX: component.subsamplingX,
+                subsamplingY: component.subsamplingY,
+                data: dst, sampleByteOrder: component.sampleByteOrder)
+        }
+        return J2KImage(
+            width: region.width, height: region.height,
+            components: cropped, colorSpace: image.colorSpace)
     }
 
     private func decodeMultiTile(

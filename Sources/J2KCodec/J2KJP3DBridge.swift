@@ -44,6 +44,45 @@
 import Foundation
 import J2KCore
 
+// MARK: - Public options
+
+/// v10.21-research — JP3D bridge SPI decode options. Carries the
+/// optional partial-resolution + ROI selectors that `JP3DSliceStackCodec`
+/// needs to extend the batched bridge to the K>0 and ROI cases.
+///
+/// On `_jp3dDecodeToCoefficients(_:options:)` the options propagate
+/// to the underlying `DecoderPipeline` so the entropy-stage filter
+/// (Stage B.1 partial-res / Stage 1 ROI footprint-skip) takes the
+/// same shortcuts the standalone `decodeResolution` / `decodeRegion`
+/// take. The options ride along inside the returned bundle so the
+/// matching finalize call can size + crop the output the same way
+/// the standalone path does — no plumbing through the JP3D layer.
+public struct JP3DBridgeOptions: Sendable, Equatable {
+    /// Target decomposition level for partial-resolution decode.
+    /// `nil` = full resolution. Range: `[0, N]` where `N` is the
+    /// codestream's `decompositionLevels`. `0` returns the deepest
+    /// LL only (thumbnail).
+    public let partialResolutionLevel: Int?
+
+    /// Region of interest. `nil` = full image. When set, the iDWT
+    /// still runs full-tile but the finalize stage crops to the
+    /// region (Stage 1 footprint-skip + Stage 2 tile-skip both
+    /// engage upstream of the bridge SPI's iDWT).
+    public let regionOfInterest: J2KRegion?
+
+    public init(
+        partialResolutionLevel: Int? = nil,
+        regionOfInterest: J2KRegion? = nil
+    ) {
+        self.partialResolutionLevel = partialResolutionLevel
+        self.regionOfInterest = regionOfInterest
+    }
+
+    /// Default options = full resolution, no ROI. Equivalent to the
+    /// v10.20 (no-options) bridge SPI behaviour.
+    public static let `default` = JP3DBridgeOptions()
+}
+
 // MARK: - Internal payload
 
 /// Opaque internal payload carried inside `JP3DSliceCoefficients`.
@@ -53,6 +92,10 @@ import J2KCore
 struct _JP3DSliceCoefficientsInternal: @unchecked Sendable {
     let metadata: CodestreamMetadata
     let dequantizedSubbands: [DecoderPipeline.SubbandInfo]
+    /// v10.21-research — captured options. Used by finalize to size
+    /// `outputDimensions` (for partial-res) and to crop after iDWT
+    /// (for ROI). Default = .default.
+    let options: JP3DBridgeOptions
 }
 
 // MARK: - Public opaque coefficient bundle
@@ -75,10 +118,35 @@ public struct JP3DSliceCoefficients: @unchecked Sendable {
     }
 
     /// Pixel dimensions of the slice this coefficients bundle will
-    /// produce after iDWT + reconstruction. Useful for the JP3D
+    /// produce after iDWT + reconstruction. Reflects the captured
+    /// `JP3DBridgeOptions`: partial-resolution shrinks the dims;
+    /// ROI shrinks the dims to the region; full decode returns
+    /// `metadata.width × metadata.height`. Useful for the JP3D
     /// caller's output-buffer sizing before iDWT runs.
-    public var width: Int  { _internal.metadata.width }
-    public var height: Int { _internal.metadata.height }
+    public var width: Int {
+        if let roi = _internal.options.regionOfInterest {
+            return roi.width
+        }
+        if let level = _internal.options.partialResolutionLevel {
+            let N = _internal.metadata.configuration.decompositionLevels
+            let halvings = max(0, N - max(0, min(level, N)))
+            let factor = 1 << halvings
+            return (_internal.metadata.width + factor - 1) / factor
+        }
+        return _internal.metadata.width
+    }
+    public var height: Int {
+        if let roi = _internal.options.regionOfInterest {
+            return roi.height
+        }
+        if let level = _internal.options.partialResolutionLevel {
+            let N = _internal.metadata.configuration.decompositionLevels
+            let halvings = max(0, N - max(0, min(level, N)))
+            let factor = 1 << halvings
+            return (_internal.metadata.height + factor - 1) / factor
+        }
+        return _internal.metadata.height
+    }
 }
 
 // MARK: - J2KDecoder SPI
@@ -109,9 +177,32 @@ extension J2KDecoder {
     public func _jp3dDecodeToCoefficients(
         _ data: Data
     ) async throws -> JP3DSliceCoefficients {
+        return try await _jp3dDecodeToCoefficients(data, options: .default)
+    }
+
+    /// v10.21-research — JP3D bridge SPI overload accepting
+    /// `JP3DBridgeOptions` for partial-resolution and/or ROI decode.
+    /// Sets the underlying `DecoderPipeline.partialResolutionLevel` /
+    /// `regionOfInterest` before extracting + entropy-decoding code-
+    /// blocks, so the same Stage B.1 entropy-skip (v10.5) and ROI
+    /// footprint-skip (v10.6) wins fire here as in `decodeResolution`
+    /// / `decodeRegion`. The returned bundle stamps the options into
+    /// its internal payload so the matching finalize call can size
+    /// `outputDimensions` (partial-res) and crop (ROI) without
+    /// requiring the JP3D layer to plumb the same options twice.
+    ///
+    /// `options == .default` is byte-for-byte equivalent to the
+    /// no-options overload above.
+    public func _jp3dDecodeToCoefficients(
+        _ data: Data,
+        options: JP3DBridgeOptions
+    ) async throws -> JP3DSliceCoefficients {
         var pipeline = DecoderPipeline()
         pipeline.metalSession = J2KMetalSession.processShared
-        let inner = try await pipeline.decodeToCoefficients(data)
+        pipeline.partialResolutionLevel = options.partialResolutionLevel
+        pipeline.regionOfInterest = options.regionOfInterest
+        let inner = try await pipeline.decodeToCoefficients(
+            data, options: options)
         return JP3DSliceCoefficients(_internal: inner)
     }
 

@@ -467,21 +467,27 @@ struct JP3DSliceStackCodec: Sendable {
         // Int32 — used to add the residual when `is_residual` is set.
         var prevSliceInt: [[Int32]]? = nil
 
-        // v10.20-research Phase 3c — bulk batched-bridge fast path.
-        // When neither resolutionLevel nor regionOfInterest is set
-        // (the dominant JP3D production case for full-volume decode),
-        // we can:
+        // v10.20-research Phase 3c — bulk batched-bridge fast path
+        // (full-volume decode). v10.21-research Phase 5 — extended
+        // to K>0 partial-resolution AND ROI cases via the new
+        // `JP3DBridgeOptions` overload.
+        //
         //   1. Decode all slices [zStart, zUpper) to coefficients in
-        //      parallel via the Phase 1 bridge SPI.
+        //      parallel via the Phase 1 bridge SPI, passing the per-
+        //      slice options (partial-res level + ROI rectangle).
         //   2. Run ONE batched iDWT + finalize across the whole z-range
-        //      via the Phase 3d bridge SPI (2.4× kernel-level speedup
-        //      vs serial per-slice iDWT on M2 release).
+        //      via the Phase 3d bridge SPI. The orchestrator now
+        //      truncates the chain to `effectiveLevels` for partial-
+        //      res and crops to the ROI after iDWT.
         //   3. Apply the Z-delta residual chain sequentially after the
         //      iDWTs land (the residual is a cheap Int32 add but has
         //      the cross-slice dependency that prevents batching).
-        // For K > 0 or any ROI request we keep the per-slice decode
-        // loop below (it uses decodeResolution / decodeRegion which
-        // the bridge SPI doesn't expose yet — Phase 3c/v2 territory).
+        //
+        // The single combination still routed per-slice is
+        // `K > 0 AND regionOfInterest != nil` — the throw above
+        // already gates that out (the 2D codec doesn't compose
+        // partial-res with ROI; it's a Phase 5 future task).
+        //
         // v10.20-research Phase 4 — env-var off-switch for A/B benching.
         // `J2K_JP3D_BATCHED_BRIDGE=0` disables the bulk batched path,
         // forcing the per-slice serial loop (the pre-Phase-3c shape)
@@ -494,9 +500,41 @@ struct JP3DSliceStackCodec: Sendable {
             }
             return false
         }()
-        let useBatchedBridge = (K == 0) && (regionOfInterest == nil) && !batchedOptedOut
+        // The (K>0, ROI) case is excluded by the throw upstream; here
+        // we only need to gate on the env-var off-switch.
+        let useBatchedBridge = !batchedOptedOut
+            && !(regionOfInterest != nil && K > 0)
         var batchedImages: [J2KImage]? = nil
         if useBatchedBridge {
+            // For K>0 we need the per-slice 2D codec's decomposition-
+            // level count up-front (to map JP3D's K → 2D's
+            // `partialResolutionLevel = N - K`). Peek the first slice's
+            // codestream header — same approach the per-slice path
+            // takes on first call.
+            if K > 0 && perSliceDecompLevels == nil {
+                let firstEntry = sliceEntries[zStart]
+                let firstCS = payload.subdata(
+                    in: firstEntry.codestreamStart..<(firstEntry.codestreamStart.advanced(by: firstEntry.length))
+                )
+                perSliceDecompLevels = Self.peekDecompositionLevels(firstCS)
+            }
+            // Build the per-slice options. All slices in the batch get
+            // the same options (uniform-options is the orchestrator's
+            // batched-eligibility requirement).
+            let sliceLevel: Int? = {
+                guard K > 0, let N = perSliceDecompLevels else { return nil }
+                return max(0, N - K)
+            }()
+            let regionRect: J2KRegion? = {
+                guard let roi = regionOfInterest else { return nil }
+                return J2KRegion(
+                    x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
+                    width: roi.xRange.count, height: roi.yRange.count)
+            }()
+            let bridgeOptions = JP3DBridgeOptions(
+                partialResolutionLevel: sliceLevel,
+                regionOfInterest: regionRect)
+
             let nSlices = zUpper - zStart
             var coefs: [JP3DSliceCoefficients?] = Array(
                 repeating: nil, count: nSlices)
@@ -510,8 +548,10 @@ struct JP3DSliceStackCodec: Sendable {
                     )
                     let dec = decoder
                     let idx = z - zStart
+                    let opts = bridgeOptions
                     group.addTask {
-                        let c = try await dec._jp3dDecodeToCoefficients(codestream)
+                        let c = try await dec._jp3dDecodeToCoefficients(
+                            codestream, options: opts)
                         return (idx, c)
                     }
                 }
