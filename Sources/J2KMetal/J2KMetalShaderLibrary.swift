@@ -76,6 +76,20 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case dwtInverse53HorizontalIntTiled = "j2k_dwt_inverse_53_horizontal_int_tiled"
     /// v10.3 Phase 2-2-tiled — threadgroup-memory tiled inverse 5/3 vertical.
     case dwtInverse53VerticalIntTiled = "j2k_dwt_inverse_53_vertical_int_tiled"
+    /// **v10.20-research Phase 2** — BATCHED inverse 5/3 Int horizontal
+    /// kernel. Bit-exact equivalent of `j2k_dwt_inverse_53_horizontal_int_tiled`
+    /// extended along a third grid dimension (Z = slice index). One
+    /// dispatch runs N parallel iDWTs for N JP3D slices, amortising
+    /// the per-slice GPU dispatch overhead that
+    /// `V10_19_JP3D_GPU_IDWT_CLOSED.md` documented as the structural
+    /// blocker for naive per-slice GPU iDWT routing. Per-slice
+    /// dimensions (width / height / band sizes) MUST be uniform
+    /// across all N slices in the batch (JP3D slice-stack guarantees
+    /// this — every slice in a tile shares header.tileWidth × height).
+    case dwtInverse53HorizontalIntTiledBatched = "j2k_dwt_inverse_53_horizontal_int_tiled_batched"
+    /// v10.20-research Phase 2 — BATCHED inverse 5/3 Int vertical kernel
+    /// (companion to `dwtInverse53HorizontalIntTiledBatched`).
+    case dwtInverse53VerticalIntTiledBatched = "j2k_dwt_inverse_53_vertical_int_tiled_batched"
     /// **v10.5 Phase 2-3-fused** — single-kernel inverse 5/3 Int that
     /// collapses the horizontal + vertical passes into one threadgroup
     /// dispatch via 10-row tg-memory tiles with 1-row halo. Eliminates

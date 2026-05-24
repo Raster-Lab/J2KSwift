@@ -1062,6 +1062,207 @@ kernel void j2k_dwt_inverse_53_vertical_int_tiled(
     }
 }
 
+// MARK: - v10.20-research Phase 2 — Inverse 5/3 Int tiled BATCHED kernels
+//
+// Bit-exact equivalent of `j2k_dwt_inverse_53_{horizontal,vertical}_int_tiled`
+// extended along a third grid dimension (Z = slice index). One dispatch
+// runs N parallel iDWTs — one threadgroup per (xTile, yTile, sliceIndex).
+//
+// Why: JP3D's slice-stack codec decodes N similar 2D slices in a row.
+// Per-slice dispatch overhead × N slices > CPU iDWT total
+// (V10_19_JP3D_GPU_IDWT_CLOSED.md). A batched dispatch amortises the
+// overhead across the volume — one kernel launch for the whole tile's
+// horizontal pass, one for the vertical pass.
+//
+// Buffer layout: each band (lowpass / highpass / output) is laid out
+// linearly per slice. Slice `s`'s lowpass band starts at
+// `lowpass[s * sliceStrideLowpass]` etc. Strides are passed as
+// constants so the kernel doesn't need to recompute them.
+//
+// Threadgroup geometry is unchanged (32 × 8 for horizontal, 32 × 8
+// for vertical). The Z dimension of the dispatch grid is N_slices;
+// each threadgroup processes its (xTile, yTile, sliceIndex) tile.
+// Threadgroup memory is per-threadgroup — no cross-slice contamination.
+//
+// Per-slice dimensions (width / height / lowpass-band-dim / highpass-
+// band-dim) MUST be uniform across all N slices in a batch. JP3D
+// slice-stack guarantees this — every slice in a JP3D tile shares
+// `header.tileWidth × header.tileHeight`.
+
+kernel void j2k_dwt_inverse_53_horizontal_int_tiled_batched(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    constant uint& sliceStrideLowpass [[buffer(5)]],
+    constant uint& sliceStrideHighpass [[buffer(6)]],
+    constant uint& sliceStrideOutput [[buffer(7)]],
+    uint3 gid [[thread_position_in_grid]],
+    uint3 lid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]
+) {
+    threadgroup int tg_even[8][33];
+
+    uint row = gid.y;
+    if (row >= height) return;
+
+    uint halfWidth = (width + 1) / 2;
+    uint halfWidthH = width / 2;
+    uint slice = tgid.z;
+
+    // Per-slice band base offsets — point into this slice's portion
+    // of each batched buffer.
+    uint lSliceBase = slice * sliceStrideLowpass;
+    uint hSliceBase = slice * sliceStrideHighpass;
+    uint oSliceBase = slice * sliceStrideOutput;
+
+    uint lBase = lSliceBase + row * halfWidth;
+    uint hBase = hSliceBase + row * halfWidthH;
+    uint oBase = oSliceBase + row * width;
+
+    uint t = lid.x;
+    uint r = lid.y;
+    uint tile_base_i = tgid.x * 32;
+
+    if (halfWidthH == 0) {
+        uint i = tile_base_i + t;
+        if (i < halfWidth) output[oBase + 2 * i] = lowpass[lBase + i];
+        return;
+    }
+
+    // Step 1 — thread t's even
+    {
+        uint i = tile_base_i + t;
+        if (i < halfWidth) {
+            int dLeft = (i > 0)
+                ? highpass[hBase + i - 1]
+                : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            int e = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+            tg_even[r][t] = e;
+            output[oBase + 2 * i] = e;
+        }
+    }
+
+    // Step 1 boundary — t == 31 also computes the 33rd even
+    if (t == 31) {
+        uint i = tile_base_i + 32;
+        if (i < halfWidth) {
+            int dLeft = (i > 0)
+                ? highpass[hBase + i - 1]
+                : highpass[hBase];
+            int dRight = (i < halfWidthH)
+                ? highpass[hBase + i]
+                : highpass[hBase + halfWidthH - 1];
+            int e = lowpass[lBase + i] - ((dLeft + dRight + 2) >> 2);
+            tg_even[r][32] = e;
+        } else {
+            tg_even[r][32] = tg_even[r][31];
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Step 2 — thread t's odd
+    uint i = tile_base_i + t;
+    if (i < halfWidthH) {
+        int eLeft = tg_even[r][t];
+        int eRight = (2 * i + 2 < width)
+            ? tg_even[r][t + 1]
+            : tg_even[r][t];
+        output[oBase + 2 * i + 1] = highpass[hBase + i] + ((eLeft + eRight) >> 1);
+    }
+}
+
+kernel void j2k_dwt_inverse_53_vertical_int_tiled_batched(
+    device const int* lowpass [[buffer(0)]],
+    device const int* highpass [[buffer(1)]],
+    device int* output [[buffer(2)]],
+    constant uint& width [[buffer(3)]],
+    constant uint& height [[buffer(4)]],
+    constant uint& sliceStrideLowpass [[buffer(5)]],
+    constant uint& sliceStrideHighpass [[buffer(6)]],
+    constant uint& sliceStrideOutput [[buffer(7)]],
+    uint3 gid [[thread_position_in_grid]],
+    uint3 lid [[thread_position_in_threadgroup]],
+    uint3 tgid [[threadgroup_position_in_grid]]
+) {
+    threadgroup int tg_even[33][32];
+
+    uint col = gid.x;
+    if (col >= width) return;
+
+    uint halfHeight = (height + 1) / 2;
+    uint halfHeightH = height / 2;
+    uint slice = tgid.z;
+
+    uint lSliceBase = slice * sliceStrideLowpass;
+    uint hSliceBase = slice * sliceStrideHighpass;
+    uint oSliceBase = slice * sliceStrideOutput;
+
+    uint t = lid.x;
+    uint r = lid.y;
+    uint tile_base_i = tgid.y * 8;
+
+    if (halfHeightH == 0) {
+        uint i = tile_base_i + r;
+        if (i < halfHeight) {
+            output[oSliceBase + (2 * i) * width + col] =
+                lowpass[lSliceBase + i * width + col];
+        }
+        return;
+    }
+
+    // Step 1 — even-row output for (i = tile_base_i + r, col)
+    {
+        uint i = tile_base_i + r;
+        if (i < halfHeight) {
+            int dTop = (i > 0)
+                ? highpass[hSliceBase + (i - 1) * width + col]
+                : highpass[hSliceBase + col];
+            int dBot = (i < halfHeightH)
+                ? highpass[hSliceBase + i * width + col]
+                : highpass[hSliceBase + (halfHeightH - 1) * width + col];
+            int e = lowpass[lSliceBase + i * width + col] - ((dTop + dBot + 2) >> 2);
+            tg_even[r][t] = e;
+            output[oSliceBase + (2 * i) * width + col] = e;
+        }
+    }
+
+    // Boundary — r == 7 also computes the 9th even
+    if (r == 7) {
+        uint i = tile_base_i + 8;
+        if (i < halfHeight) {
+            int dTop = (i > 0)
+                ? highpass[hSliceBase + (i - 1) * width + col]
+                : highpass[hSliceBase + col];
+            int dBot = (i < halfHeightH)
+                ? highpass[hSliceBase + i * width + col]
+                : highpass[hSliceBase + (halfHeightH - 1) * width + col];
+            int e = lowpass[lSliceBase + i * width + col] - ((dTop + dBot + 2) >> 2);
+            tg_even[8][t] = e;
+        } else {
+            tg_even[8][t] = tg_even[7][t];
+        }
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    // Step 2 — odd-row output
+    uint i = tile_base_i + r;
+    if (i < halfHeightH) {
+        int eTop = tg_even[r][t];
+        int eBot = (2 * i + 2 < height)
+            ? tg_even[r + 1][t]
+            : tg_even[r][t];
+        output[oSliceBase + (2 * i + 1) * width + col] =
+            highpass[hSliceBase + i * width + col] + ((eTop + eBot) >> 1);
+    }
+}
+
 // MARK: - v10.5 Phase 2-3-fused — Inverse 5/3 Int H+V fused-tile kernel
 //
 // The v10.3 Phase 2-2-tiled pair (`*_horizontal_int_tiled` +

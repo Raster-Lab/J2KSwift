@@ -1484,6 +1484,320 @@ struct DecoderPipeline: Sendable {
         }
     }
 
+    // MARK: - JP3D bridge SPI (v10.20-research Phase 1)
+    //
+    // Two new internal entry points that EXPOSE the pipeline split
+    // between dequantization and inverse-wavelet-transform without
+    // changing the production single-tile decode path. The composition
+    //
+    //     iDWTAndFinalizeCoefficients(decodeToCoefficients(data))
+    //
+    // is byte-identical to `decodeSingleTile(parseCodestream(data))`
+    // on every single-tile codestream — which is what JP3D's slice-
+    // stack codec emits for each Z-slice. The JP3D side then has the
+    // freedom to:
+    //
+    //  • decode N slices to coefficients (Stage A — entropy + dequant)
+    //  • submit ONE batched GPU iDWT dispatch across all N slices
+    //  • finalize each slice (Stage C — colour + DC + reconstruct)
+    //
+    // which is the structural shape Phase 2 needs. Phase 1 ships only
+    // the split — single-slice batched iDWT collapses to today's behaviour.
+
+    /// JP3D bridge — internal Phase 1 helper. Runs the single-tile
+    /// pipeline through Stage 4 (dequantization) and stops. Returns
+    /// the dequantized subbands + the codestream metadata so the
+    /// caller can later run iDWT + colour + DC + reconstruct via
+    /// `iDWTAndFinalizeCoefficients`.
+    ///
+    /// Multi-tile is rejected — JP3D slices are always single-tile
+    /// 2D J2K codestreams (per JP3DSliceStackCodec wire format).
+    /// Routing a multi-tile codestream through this bridge would
+    /// either need a per-tile-group decode or an explicit caller-
+    /// side multi-tile orchestration, both of which are out of scope.
+    mutating func decodeToCoefficients(
+        _ data: Data
+    ) async throws -> _JP3DSliceCoefficientsInternal {
+        let (metadata, tiles) = try parseCodestream(data)
+        guard !metadata.isMultiTile else {
+            throw J2KError.notImplemented(
+                "JP3D bridge: decodeToCoefficients does not yet "
+                + "support multi-tile codestreams (slice-stack slices "
+                + "are always single-tile).")
+        }
+        let tileData = tiles.first?.tileData ?? Data()
+
+        let codeBlocks = try extractTileData(
+            tileData, metadata: metadata,
+            maxResolutionLevel: partialResolutionLevel,
+            regionOfInterest: regionOfInterest,
+            maxQualityLayer: maxQualityLayer)
+
+        let (decodedBlocks, _) = try await applyEntropyDecoding(
+            codeBlocks, metadata: metadata)
+
+        let dequantizedSubbands = try await applyDequantization(
+            decodedBlocks, metadata: metadata)
+
+        return _JP3DSliceCoefficientsInternal(
+            metadata: metadata,
+            dequantizedSubbands: dequantizedSubbands)
+    }
+
+    /// v10.20-research Phase 3b — JP3D batched bridge SPI. Takes a
+    /// batch of N slice coefficient bundles (each previously produced
+    /// by `decodeToCoefficients`) and runs ONE batched multi-level
+    /// GPU iDWT across all N slices via
+    /// `J2KMetalDWT.inverse2DInt32MultiLevelFusedBatched`, then
+    /// finalises each slice into a `J2KImage`.
+    ///
+    /// **JP3D production-shape only**: requires 5/3 reversible filter,
+    /// single-component slices (componentIndex 0 only), full-
+    /// resolution decode (no `partialResolutionLevel`), uniform
+    /// dimensions across the batch (JP3D slice-stack guarantees this).
+    /// Any other shape falls back to per-slice serial via
+    /// `iDWTAndFinalizeCoefficients` so the SPI never errors on the
+    /// non-JP3D case — it just doesn't get the batched win.
+    ///
+    /// Bit-exact composition guarantee: for every slice `i`,
+    ///     batched[i].components[0].data ==
+    ///         iDWTAndFinalizeCoefficients(coefs[i]).components[0].data
+    /// on every JP3D-shape input.
+    mutating func iDWTAndFinalizeCoefficientsBatched(
+        _ coefsBatch: [_JP3DSliceCoefficientsInternal]
+    ) async throws -> [J2KImage] {
+        guard !coefsBatch.isEmpty else { return [] }
+
+        // v10.20-research Phase 3d — orchestrator integration. The
+        // four-way diagnostic V10_20_BridgeInputsFourWayDiagnostic
+        // proved that on the per-slice GPU-chain shape this method
+        // builds, all four CPU/GPU 5/3 iDWT implementations
+        // (batched orchestrator / serial GPU multi-level fused /
+        // J2KMetalDWT per-level CPU / J2KDWT2DOptimizer multi-level
+        // CPU) produce bit-exact identical output. So the previous
+        // two integration attempts diverged not because the
+        // orchestrator was wrong but because the chain construction
+        // didn't match the per-slice raw-coefficient shape the
+        // diagnostic uses. This integration mirrors the diagnostic
+        // exactly — raw `.coefficients` for every band, no
+        // `getSubbandAsInt32` rounding (which only fires for the
+        // irreversible 9/7 path that JP3D doesn't use anyway since
+        // dequantization sets `doubleCoefficients = nil` for 5/3).
+        //
+        // **Eligibility gate.** Only JP3D-production shapes route
+        // through the batched path:
+        //   • 5/3 reversible filter
+        //   • single-component slices (`componentCount == 1`)
+        //   • uniform dimensions across the batch
+        //   • full-resolution decode (no `partialResolutionLevel`)
+        //   • no ROI
+        //   • ≥ 1 decomposition level
+        // Anything else falls back to the per-slice serial loop —
+        // same output, no batched win, never errors on a valid
+        // bundle.
+
+        let head = coefsBatch[0]
+        let isReversible53: Bool = {
+            if case .irreversible97 = head.metadata.configuration.waveletFilter {
+                return false
+            }
+            return true
+        }()
+        let levels = head.metadata.configuration.decompositionLevels
+        let headW = head.metadata.width
+        let headH = head.metadata.height
+        let headComponentCount = head.metadata.componentCount
+
+        var batchable = isReversible53
+            && headComponentCount == 1
+            && levels >= 1
+            && partialResolutionLevel == nil
+            && regionOfInterest == nil
+
+        if batchable {
+            for slice in coefsBatch {
+                if slice.metadata.width != headW
+                    || slice.metadata.height != headH
+                    || slice.metadata.componentCount != 1 {
+                    batchable = false
+                    break
+                }
+                if case .irreversible97 = slice.metadata.configuration.waveletFilter {
+                    batchable = false
+                    break
+                }
+                if slice.metadata.configuration.decompositionLevels != levels {
+                    batchable = false
+                    break
+                }
+            }
+        }
+
+        guard batchable else {
+            var results: [J2KImage] = []
+            results.reserveCapacity(coefsBatch.count)
+            for coefs in coefsBatch {
+                results.append(try await iDWTAndFinalizeCoefficients(coefs))
+            }
+            return results
+        }
+
+        // Build the per-slice GPU chain. Identical shape to what
+        // V10_20_BridgeInputsFourWayDiagnostic builds — raw
+        // `sb.coefficients`, padding via `padFlatInt32`, level chain
+        // deepest-first, LL only at the deepest level (subsequent
+        // levels rely on GPU-resident chain reuse).
+        let subsX = head.metadata.components[0].subsamplingX
+        let subsY = head.metadata.components[0].subsamplingY
+        let compW = headW / subsX
+        let compH = headH / subsY
+        var levelSizes: [(width: Int, height: Int)] = []
+        for d in 0...levels {
+            let denom = 1 << d
+            let bandX1 = EncoderPipeline.ceilDivIntegerOrigin(compW, denom)
+            let bandY1 = EncoderPipeline.ceilDivIntegerOrigin(compH, denom)
+            levelSizes.append((bandX1, bandY1))
+        }
+
+        let llDimsW = levelSizes[levels].width
+        let llDimsH = levelSizes[levels].height
+
+        var perSliceChains: [[J2KMetalDWTSubbandsInt32]] = []
+        perSliceChains.reserveCapacity(coefsBatch.count)
+
+        for slice in coefsBatch {
+            let subs = slice.dequantizedSubbands.filter {
+                $0.componentIndex == 0
+            }
+
+            // LL lookup: drop the `level ==` filter and match
+            // `subband == .ll` only — the entropy stage stores LL
+            // at `level: 0` in the HT 5/3 path, not at `level: levels`
+            // (the only legacy helper that uses `level: levels` is
+            // `buildLLSubbandsFromBuffer` which is no longer called).
+            // The production serial path at line ~4245
+            // (`compSubbands.first(where: { $0.subband == .ll })`)
+            // works because there is always exactly ONE LL per
+            // component regardless of which level field it carries.
+            let initialLL: [Int32]
+            if let ll = subs.first(where: { $0.subband == .ll }) {
+                initialLL = padFlatInt32(
+                    ll.coefficients, srcW: ll.width, srcH: ll.height,
+                    dstW: llDimsW, dstH: llDimsH)
+            } else {
+                initialLL = [Int32](repeating: 0, count: llDimsW * llDimsH)
+            }
+
+            var chain: [J2KMetalDWTSubbandsInt32] = []
+            chain.reserveCapacity(levels)
+            for level in (1...levels).reversed() {
+                let parentW = levelSizes[level - 1].width
+                let parentH = levelSizes[level - 1].height
+                let llW = levelSizes[level].width
+                let llH = levelSizes[level].height
+                let hlW = parentW - llW
+                let lhH = parentH - llH
+
+                func raw(_ band: J2KSubband, _ dstW: Int, _ dstH: Int) -> [Int32] {
+                    if let sb = subs.first(where: { $0.level == level && $0.subband == band }) {
+                        return padFlatInt32(sb.coefficients,
+                                            srcW: sb.width, srcH: sb.height,
+                                            dstW: dstW, dstH: dstH)
+                    }
+                    return [Int32](repeating: 0, count: dstW * dstH)
+                }
+
+                let llForLevel: [Int32] = chain.isEmpty ? initialLL : []
+                chain.append(J2KMetalDWTSubbandsInt32(
+                    ll: llForLevel,
+                    lh: raw(.lh, llW, lhH),
+                    hl: raw(.hl, hlW, llH),
+                    hh: raw(.hh, hlW, lhH),
+                    llWidth: llW, llHeight: llH,
+                    originalWidth: parentW, originalHeight: parentH,
+                    tileOriginX: 0, tileOriginY: 0))
+            }
+            perSliceChains.append(chain)
+        }
+
+        // ONE batched multi-level dispatch across all slices.
+        let metalDWT = J2KMetalDWT(
+            configuration: J2KMetalDWTConfiguration(
+                filter: .reversible53, decompositionLevels: levels),
+            device: metalSession?.device,
+            bufferPool: metalSession?.bufferPool,
+            shaderLibrary: metalSession?.shaderLibrary)
+        try await metalDWT.initialize()
+        let perSliceFlatInt32 = try await metalDWT.inverse2DInt32MultiLevelFusedBatched(
+            perSliceSubbandsPerLevel: perSliceChains)
+
+        // Per-slice finalize: Int32 → Double → DC unshift → reconstruct.
+        var results: [J2KImage] = []
+        results.reserveCapacity(coefsBatch.count)
+        for (sIdx, slice) in coefsBatch.enumerated() {
+            var spatialData: [[Double]] = [
+                vDSPConvert.int32sToDoubles(perSliceFlatInt32[sIdx])
+            ]
+            // 1-component MCT is a no-op; call for parity with serial path.
+            try applyInverseColorTransformInPlace(&spatialData,
+                                                  metadata: slice.metadata)
+            let compInfo = slice.metadata.components[0]
+            if !compInfo.signed {
+                var dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                spatialData[0].withUnsafeMutableBufferPointer { buf in
+                    #if canImport(Accelerate)
+                    vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset,
+                                buf.baseAddress!, 1, vDSP_Length(buf.count))
+                    #else
+                    for i in 0..<buf.count { buf[i] += dcOffset }
+                    #endif
+                }
+            }
+            let image = try reconstructImage(spatialData,
+                                             metadata: slice.metadata)
+            results.append(image)
+        }
+        return results
+    }
+
+    /// JP3D bridge — companion to `decodeToCoefficients`. Takes the
+    /// dequantized subbands previously produced by that method and
+    /// runs Stage 5 (iDWT) + Stage 6 (inverse colour transform) +
+    /// DC level unshift + Stage 7 (image reconstruction) to return
+    /// the final J2KImage.
+    ///
+    /// Bit-exact composition guarantee: for a single-tile codestream
+    /// `data`, the bytes of the returned image equal the bytes of
+    /// the image produced by the public `decode(data)`.
+    mutating func iDWTAndFinalizeCoefficients(
+        _ coefs: _JP3DSliceCoefficientsInternal
+    ) async throws -> J2KImage {
+        let metadata = coefs.metadata
+
+        var spatialData = try await applyInverseWaveletTransform(
+            coefs.dequantizedSubbands, metadata: metadata)
+
+        try applyInverseColorTransformInPlace(&spatialData, metadata: metadata)
+        var rgbData = spatialData
+
+        for (compIdx, compInfo) in metadata.components.enumerated() {
+            guard compIdx < rgbData.count else { break }
+            if !compInfo.signed {
+                var dcOffset = Double(1 << (compInfo.bitDepth - 1))
+                rgbData[compIdx].withUnsafeMutableBufferPointer { buf in
+                    #if canImport(Accelerate)
+                    vDSP_vsaddD(buf.baseAddress!, 1, &dcOffset,
+                                buf.baseAddress!, 1, vDSP_Length(buf.count))
+                    #else
+                    for i in 0..<buf.count { buf[i] += dcOffset }
+                    #endif
+                }
+            }
+        }
+
+        return try reconstructImage(rgbData, metadata: metadata)
+    }
+
     private func decodeMultiTile(
         metadata: CodestreamMetadata,
         tiles: [(tileIndex: Int, tileData: Data)],
