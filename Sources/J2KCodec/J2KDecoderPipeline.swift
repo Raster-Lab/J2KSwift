@@ -1566,38 +1566,33 @@ struct DecoderPipeline: Sendable {
     mutating func iDWTAndFinalizeCoefficientsBatched(
         _ coefsBatch: [_JP3DSliceCoefficientsInternal]
     ) async throws -> [J2KImage] {
+        // v10.20-research Phase 3b — ships serial-loop fallback.
+        //
+        // Tried two integration approaches to wire the Phase 3a
+        // batched orchestrator (2.4× faster on M2) through this
+        // bridge SPI; both diverged bit-exact on real codestream
+        // data despite the orchestrator being proven correct on raw
+        // coefficients by V10_20_GPUvsCPUIDWTDiagnostic (PASS).
+        //
+        // The remaining divergence is in some construction-or-finalize
+        // detail between this SPI and the production serial path:
+        // possibly the HL/LH/HH dc-rounding semantics, possibly the
+        // level-chain GPU-resident reuse vs CPU readback rounding
+        // boundary, possibly the reconstructImage vs custom finalize
+        // path interaction. The synthetic LCG-noise Phase 3a parity
+        // tests don't reach the problematic value ranges.
+        //
+        // Root cause needs careful pre/post-orchestrator value
+        // inspection on a small 32x32 fixture where divergent samples
+        // can be traced — not in scope for this session.
+        //
+        // SPI surface ships now (5/5 V10_20_BatchedBridgeParityTests
+        // PASS via serial-loop) so JP3DSliceStackCodec can adopt the
+        // batched-bridge API in Phase 3c with bit-exact correctness.
+        // The kernel-level 2.4× win waits for Phase 3d to resolve
+        // the integration divergence — once that lands, the
+        // implementation swaps to the orchestrator transparently.
         guard !coefsBatch.isEmpty else { return [] }
-
-        // v10.20-research Phase 3b — SPI surface ships with serial-
-        // loop implementation. Bit-exact correctness guaranteed
-        // (same code path as the Phase 1 bridge SPI per slice).
-        //
-        // **Why not the Phase 3a batched orchestrator yet:**
-        //
-        // Three diagnostic tests (V10_20_GPUvsCPUIDWTDiagnostic)
-        // narrowed the integration issue:
-        //
-        //   • GPU multi-level fused ≡ CPU per-level (production
-        //     parity holds) — PASS
-        //   • Batched orchestrator ≡ serial GPU multi-level fused
-        //     on raw coefficients — PASS
-        //   • Batched bridge SPI integration ≡ serial bridge SPI on
-        //     real codestream coefficients (which use the +0.5-shifted
-        //     dequantized doubles from getSubbandAsInt32) — FAIL
-        //
-        // The orchestrator works correctly on raw coefficients but
-        // its output diverges from CPU per-level on the +0.5-shifted
-        // HT-dequantized coefficients that JP3D's bridge SPI feeds
-        // it. Either the orchestrator has a subtle bug only triggered
-        // by shifted input ranges, or my chain-reuse semantics differ
-        // from per-level CPU readback in a way that compounds across
-        // levels with shifted inputs.
-        //
-        // Root cause needs careful pre-vs-post-orchestrator value
-        // inspection — deferred. The serial-loop fallback ships now
-        // so JP3DSliceStackCodec can adopt the SPI in Phase 3c with
-        // bit-exact correctness; the kernel-level 2.4× win waits for
-        // Phase 3d's orchestrator fix.
         var results: [J2KImage] = []
         results.reserveCapacity(coefsBatch.count)
         for coefs in coefsBatch {
