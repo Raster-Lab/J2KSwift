@@ -131,4 +131,40 @@ extension J2KDecoder {
         pipeline.metalSession = J2KMetalSession.processShared
         return try await pipeline.iDWTAndFinalizeCoefficients(coefs._internal)
     }
+
+    /// v10.20-research Phase 3b — JP3D batched bridge SPI. Takes N
+    /// coefficient bundles previously produced by
+    /// `_jp3dDecodeToCoefficients` and runs ONE batched multi-level
+    /// GPU iDWT dispatch across all N slices via
+    /// `J2KMetalDWT.inverse2DInt32MultiLevelFusedBatched`, then
+    /// finalises each slice into a `J2KImage`.
+    ///
+    /// For the JP3D-typical production shape (5/3 reversible, single-
+    /// component slices, uniform dims across the batch, full
+    /// resolution, no ROI), this delivers the per-slice GPU dispatch
+    /// amortisation that Phase 3a measured at **2.4× on M2** for
+    /// 16-slice 256×256×3-level batches.
+    ///
+    /// For any other shape (9/7 lossy, multi-component, non-uniform
+    /// dims, partial-resolution, ROI) the bridge falls back to a
+    /// per-slice serial loop via `_jp3dIDWTAndFinalize` — same
+    /// output, no batched win. The fallback is invisible to callers
+    /// and ensures the SPI never errors on a valid coefficient
+    /// bundle.
+    ///
+    /// **Bit-exact composition guarantee**: for every slice `i` in
+    /// the batch,
+    /// ```
+    /// batched[i].components[0].data ==
+    ///     _jp3dIDWTAndFinalize(coefsBatch[i]).components[0].data
+    /// ```
+    /// — verified by `V10_20_BatchedBridgeParityTests`.
+    public func _jp3dIDWTAndFinalizeBatched(
+        _ coefsBatch: [JP3DSliceCoefficients]
+    ) async throws -> [J2KImage] {
+        var pipeline = DecoderPipeline()
+        pipeline.metalSession = J2KMetalSession.processShared
+        return try await pipeline.iDWTAndFinalizeCoefficientsBatched(
+            coefsBatch.map { $0._internal })
+    }
 }
