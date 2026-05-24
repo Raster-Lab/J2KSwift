@@ -2483,6 +2483,263 @@ public actor J2KMetalDWT {
         return result
     }
 
+    // MARK: - v10.20-research Phase 2 — BATCHED inverse 5/3 Int
+
+    /// Performs N parallel inverse 2D 5/3 Int transforms in one Metal
+    /// command buffer. The batch's `subbandsBatch[i]` produces the
+    /// returned `[Int32]` at index `i`. **All slices in the batch
+    /// MUST have identical dimensions** (originalWidth, originalHeight,
+    /// llWidth, llHeight) — JP3D's slice-stack codec guarantees this
+    /// (every slice in a tile shares header.tileWidth × tileHeight),
+    /// and this method throws `J2KError.invalidParameter` on mixed
+    /// dimensions so the caller cannot silently produce wrong output.
+    ///
+    /// Why batched: per-slice GPU dispatch overhead × N slices
+    /// regressed JP3D decode in the naive forced-per-slice routing
+    /// (`V10_19_JP3D_GPU_IDWT_CLOSED.md`). One dispatch over N slices
+    /// amortises that overhead across the volume; the new batched
+    /// kernels `j2k_dwt_inverse_53_{horizontal,vertical}_int_tiled_batched`
+    /// use a Z grid dimension where `tgid.z = slice index`, with
+    /// per-slice stride offsets passed as constants.
+    ///
+    /// Bit-exact: each output slice is byte-identical to what
+    /// `inverse2DInt32(subbands: subbandsBatch[i], backend: .metal)`
+    /// would produce. Parity test:
+    /// `V10_20_BatchedInverseInt32ParityTests`.
+    ///
+    /// **Single-slice batches collapse to current behaviour** — a
+    /// batch of 1 dispatches the same kernel with `gridDepth = 1`,
+    /// equivalent to the existing tiled path.
+    public func inverseBatched2DInt32(
+        subbandsBatch: [J2KMetalDWTSubbandsInt32]
+    ) async throws -> [[Int32]] {
+        guard !subbandsBatch.isEmpty else { return [] }
+
+        // Uniform-dimension guard. JP3D slice-stack guarantees this;
+        // exposing the SPI more generally would require fall-through
+        // to serial dispatch for non-uniform batches (not implemented).
+        let head = subbandsBatch[0]
+        for (i, s) in subbandsBatch.enumerated() {
+            guard s.originalWidth == head.originalWidth,
+                  s.originalHeight == head.originalHeight,
+                  s.llWidth == head.llWidth,
+                  s.llHeight == head.llHeight else {
+                throw J2KError.invalidParameter(
+                    "inverseBatched2DInt32: slice \(i) dimensions "
+                    + "\(s.originalWidth)x\(s.originalHeight) / "
+                    + "ll=\(s.llWidth)x\(s.llHeight) do not match batch "
+                    + "head \(head.originalWidth)x\(head.originalHeight) / "
+                    + "ll=\(head.llWidth)x\(head.llHeight). All slices "
+                    + "in a batch must share identical dimensions.")
+            }
+        }
+
+        let width = head.originalWidth
+        let height = head.originalHeight
+        guard width >= 2, height >= 2 else {
+            throw J2KError.invalidParameter(
+                "Subband dimensions must produce at least 2×2 output")
+        }
+
+        let nSlices = subbandsBatch.count
+        let startTime = currentTime()
+        _statistics.totalOperations += 1
+
+        // Currently batched path is GPU-only. CPU fallback would
+        // collapse to the serial loop — exposed as a future-work
+        // option if needed; not needed for the JP3D use case.
+        let result = try await inverseBatched2DGPUInt32(subbandsBatch: subbandsBatch)
+        _statistics.gpuOperations += 1
+        _statistics.totalProcessingTime += currentTime() - startTime
+        _ = nSlices
+        return result
+    }
+
+    private func inverseBatched2DGPUInt32(
+        subbandsBatch: [J2KMetalDWTSubbandsInt32]
+    ) async throws -> [[Int32]] {
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+
+        let head = subbandsBatch[0]
+        let width = head.originalWidth
+        let height = head.originalHeight
+        let bands = BandGeometry(width: width, height: height,
+                                 llW: head.llWidth, llH: head.llHeight)
+        let llH = bands.llH
+        let halfHH = bands.halfHH
+        let nSlices = subbandsBatch.count
+
+        // Per-slice band element counts. The H pass produces colLow
+        // (width × llH) and colHigh (width × halfHH); V pass produces
+        // the final output (width × height).
+        let llCount = max(head.ll.count, 1)
+        let lhCount = max(head.lh.count, 1)
+        let hlCount = max(head.hl.count, 1)
+        let hhCount = max(head.hh.count, 1)
+        let colLowCount = width * llH
+        let colHighCount = max(width * halfHH, 1)
+        let outputCount = width * height
+
+        let stride32 = MemoryLayout<Int32>.stride
+
+        func makeBuffer(_ size: Int) throws -> any MTLBuffer {
+            guard let buf = device.makeBuffer(length: max(size, 1),
+                                              options: .storageModeShared) else {
+                throw J2KError.internalError("Failed to allocate Metal buffer")
+            }
+            return buf
+        }
+
+        // Allocate ONE batched buffer per band, sized N × per-slice size.
+        // Layout: slice s's data starts at s * sliceStride.
+        let llBuffer = try makeBuffer(nSlices * llCount * stride32)
+        let lhBuffer = try makeBuffer(nSlices * lhCount * stride32)
+        let hlBuffer = try makeBuffer(nSlices * hlCount * stride32)
+        let hhBuffer = try makeBuffer(nSlices * hhCount * stride32)
+        let colLowBuffer = try makeBuffer(nSlices * colLowCount * stride32)
+        let colHighBuffer = try makeBuffer(nSlices * colHighCount * stride32)
+        let outputBuffer = try makeBuffer(nSlices * outputCount * stride32)
+
+        // Copy each slice's coefficients into the corresponding Z stride.
+        for (s, sub) in subbandsBatch.enumerated() {
+            if !sub.ll.isEmpty {
+                sub.ll.withUnsafeBytes { src in
+                    let dst = llBuffer.contents() + s * llCount * stride32
+                    dst.copyMemory(from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+            if !sub.lh.isEmpty {
+                sub.lh.withUnsafeBytes { src in
+                    let dst = lhBuffer.contents() + s * lhCount * stride32
+                    dst.copyMemory(from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+            if !sub.hl.isEmpty {
+                sub.hl.withUnsafeBytes { src in
+                    let dst = hlBuffer.contents() + s * hlCount * stride32
+                    dst.copyMemory(from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+            if !sub.hh.isEmpty {
+                sub.hh.withUnsafeBytes { src in
+                    let dst = hhBuffer.contents() + s * hhCount * stride32
+                    dst.copyMemory(from: src.baseAddress!, byteCount: src.count)
+                }
+            }
+        }
+
+        let horizontalPSO = try await shaderLibrary.computePipeline(for: .dwtInverse53HorizontalIntTiledBatched)
+        let verticalPSO   = try await shaderLibrary.computePipeline(for: .dwtInverse53VerticalIntTiledBatched)
+
+        guard let cb = queue.makeCommandBuffer() else {
+            throw J2KError.internalError("Failed to create batched-iDWT command buffer")
+        }
+
+        // H pass — combine LL+HL into colLow, LH+HH into colHigh.
+        // We dispatch the batched horizontal kernel twice (once per
+        // band pair), with N parallel slices each time. Same shape
+        // as the v10.3 tiled pair, just with Z grid extension.
+        let halfWidth = (width + 1) / 2
+        let halfWidthH = width / 2
+
+        // Pass A: LL (ll lowpass) + HL (hl highpass) → colLow
+        var widthVar = UInt32(width)
+        var heightVarLowH = UInt32(llH)   // process llH rows
+        var sliceStrideLowA = UInt32(llCount)
+        var sliceStrideHighA = UInt32(hlCount)
+        var sliceStrideOutA = UInt32(colLowCount)
+        if let encA = cb.makeComputeCommandEncoder() {
+            encA.setComputePipelineState(horizontalPSO)
+            encA.setBuffer(llBuffer, offset: 0, index: 0)
+            encA.setBuffer(hlBuffer, offset: 0, index: 1)
+            encA.setBuffer(colLowBuffer, offset: 0, index: 2)
+            encA.setBytes(&widthVar,        length: MemoryLayout<UInt32>.size, index: 3)
+            encA.setBytes(&heightVarLowH,   length: MemoryLayout<UInt32>.size, index: 4)
+            encA.setBytes(&sliceStrideLowA, length: MemoryLayout<UInt32>.size, index: 5)
+            encA.setBytes(&sliceStrideHighA,length: MemoryLayout<UInt32>.size, index: 6)
+            encA.setBytes(&sliceStrideOutA, length: MemoryLayout<UInt32>.size, index: 7)
+            let tgPerGridX = (halfWidth + 31) / 32
+            let tgPerGridY = (llH + 7) / 8
+            encA.dispatchThreadgroups(
+                MTLSize(width: tgPerGridX, height: tgPerGridY, depth: nSlices),
+                threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            encA.endEncoding()
+            _ = halfWidthH
+        }
+
+        // Pass B: LH (lh lowpass) + HH (hh highpass) → colHigh
+        var heightVarHalfHH = UInt32(halfHH)
+        var sliceStrideLowB = UInt32(lhCount)
+        var sliceStrideHighB = UInt32(hhCount)
+        var sliceStrideOutB = UInt32(colHighCount)
+        if halfHH > 0, let encB = cb.makeComputeCommandEncoder() {
+            encB.setComputePipelineState(horizontalPSO)
+            encB.setBuffer(lhBuffer, offset: 0, index: 0)
+            encB.setBuffer(hhBuffer, offset: 0, index: 1)
+            encB.setBuffer(colHighBuffer, offset: 0, index: 2)
+            encB.setBytes(&widthVar,        length: MemoryLayout<UInt32>.size, index: 3)
+            encB.setBytes(&heightVarHalfHH, length: MemoryLayout<UInt32>.size, index: 4)
+            encB.setBytes(&sliceStrideLowB, length: MemoryLayout<UInt32>.size, index: 5)
+            encB.setBytes(&sliceStrideHighB,length: MemoryLayout<UInt32>.size, index: 6)
+            encB.setBytes(&sliceStrideOutB, length: MemoryLayout<UInt32>.size, index: 7)
+            let tgPerGridX = (halfWidth + 31) / 32
+            let tgPerGridY = (halfHH + 7) / 8
+            encB.dispatchThreadgroups(
+                MTLSize(width: tgPerGridX, height: tgPerGridY, depth: nSlices),
+                threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            encB.endEncoding()
+        }
+
+        // V pass: colLow + colHigh → final output.
+        var heightVarFinal = UInt32(height)
+        var sliceStrideLowC = UInt32(colLowCount)
+        var sliceStrideHighC = UInt32(colHighCount)
+        var sliceStrideOutC = UInt32(outputCount)
+        if let encC = cb.makeComputeCommandEncoder() {
+            encC.setComputePipelineState(verticalPSO)
+            encC.setBuffer(colLowBuffer, offset: 0, index: 0)
+            encC.setBuffer(colHighBuffer, offset: 0, index: 1)
+            encC.setBuffer(outputBuffer, offset: 0, index: 2)
+            encC.setBytes(&widthVar,        length: MemoryLayout<UInt32>.size, index: 3)
+            encC.setBytes(&heightVarFinal,  length: MemoryLayout<UInt32>.size, index: 4)
+            encC.setBytes(&sliceStrideLowC, length: MemoryLayout<UInt32>.size, index: 5)
+            encC.setBytes(&sliceStrideHighC,length: MemoryLayout<UInt32>.size, index: 6)
+            encC.setBytes(&sliceStrideOutC, length: MemoryLayout<UInt32>.size, index: 7)
+            let tgPerGridX = (width + 31) / 32
+            let tgPerGridY = ((height + 1) / 2 + 7) / 8
+            encC.dispatchThreadgroups(
+                MTLSize(width: tgPerGridX, height: tgPerGridY, depth: nSlices),
+                threadsPerThreadgroup: MTLSize(width: 32, height: 8, depth: 1))
+            encC.endEncoding()
+        }
+
+        cb.commit()
+        await cb.completed()
+        if cb.status == .error {
+            throw J2KError.internalError(
+                "Batched inverse 5/3 GPU dispatch failed: \(cb.error?.localizedDescription ?? "(no description)")")
+        }
+
+        // Read back per-slice output slices. readInt32Array doesn't
+        // take a byte offset; copy directly from the typed pointer.
+        var results: [[Int32]] = []
+        results.reserveCapacity(nSlices)
+        let basePtr = outputBuffer.contents().assumingMemoryBound(to: Int32.self)
+        J2KMetalUMACounters.incrementContents()
+        for s in 0..<nSlices {
+            let sliceStart = basePtr + s * outputCount
+            let slice = [Int32](unsafeUninitializedCapacity: outputCount) { buf, count in
+                buf.baseAddress!.update(from: sliceStart, count: outputCount)
+                count = outputCount
+            }
+            J2KMetalUMACounters.incrementMemcpy()
+            results.append(slice)
+        }
+        return results
+    }
+
     // MARK: - Multi-Level Forward DWT
 
     /// Performs a multi-level 2D forward DWT.
