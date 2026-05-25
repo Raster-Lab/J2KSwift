@@ -595,8 +595,27 @@ extension J2KDecoder {
             // full-tile); cropping yields the region. `.cached` has no
             // cache layer yet, so it falls back to the direct decode per
             // its documented behaviour.
-            let fullImage = try await decodeRegionDirect(data: data, region: options.region)
-            return try extractRegion(from: fullImage, region: options.region)
+            //
+            // v10.15.0 ROI Stage 3: when eligible (single-tile, single-
+            // component, 5/3 reversible, subsampling 1:1), the windowed
+            // iDWT path inside DecoderPipeline produces a region-sized
+            // image directly — skipping the full-tile iDWT. The
+            // returned image dims then ALREADY match the region, so
+            // the explicit extractRegion call below would over-crop
+            // at the original (non-zero) region origin. Detect that
+            // and return the windowed image as-is.
+            let decoded = try await decodeRegionDirect(data: data, region: options.region)
+            // v10.15.0 — when the windowed iDWT path fires, `decoded`
+            // is already region-sized (origin (0,0)). The original
+            // extractRegion call (which expected a full-image return
+            // and crops at (region.x, region.y, w, h)) would over-
+            // crop the now-region-sized buffer. Detect by dim-match
+            // and short-circuit.
+            if decoded.width == options.region.width
+               && decoded.height == options.region.height {
+                return decoded
+            }
+            return try extractRegion(from: decoded, region: options.region)
         }
     }
 
