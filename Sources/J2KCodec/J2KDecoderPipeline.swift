@@ -531,8 +531,27 @@ struct DecoderPipeline: Sendable {
         // gets reduced data + reduced dims consistently. A future
         // optimisation would add the truncation to the GPU iDWT.
         let allowGPUPath = partialResolutionLevel == nil
+        // v10.15.0 — when a TRULY single-tile ROI fires AND
+        // J2K_WINDOWED_IDWT=1, skip GPU routing so the CPU-side
+        // windowed iDWT path fires. Default OFF: production corpus
+        // is multi-tile (encoder .auto policy from v6.0.0) so this
+        // guard is a no-op for the standard corpus.
+        let preferWindowedCPUForROI = ProcessInfo.processInfo
+            .environment["J2K_WINDOWED_IDWT"] == "1"
+            && regionOfInterest != nil
+            && !metadata.isMultiTile
+            && {
+                if case .irreversible97 = metadata.configuration.waveletFilter {
+                    return false
+                }
+                return true
+            }()
+            && metadata.componentCount == 1
+            && metadata.components[0].subsamplingX == 1
+            && metadata.components[0].subsamplingY == 1
 
         if allowGPUPath
+            && !preferWindowedCPUForROI
             && Self._gpuInverse53Enabled
             && metadata.width * metadata.height >= Self._gpuInverse53PixelThreshold
             && J2KMetalDWT.isAvailable
@@ -1094,7 +1113,46 @@ struct DecoderPipeline: Sendable {
         // Stage 5: Inverse wavelet transform
         reportProgress(progress, stage: .inverseWaveletTransform, stageProgress: 0.0)
         t0 = DispatchTime.now()
-        var spatialData = try await applyInverseWaveletTransform(dequantizedSubbands, metadata: metadata)
+        // v10.15.0 — ROI Stage 3 windowed iDWT eligibility gate for
+        // single-tile decode. When ALL of {regionOfInterest set,
+        // partialResolutionLevel nil, 5/3 reversible, single
+        // component, subsampling 1:1} hold, we route the iDWT
+        // through the windowed path — producing only the region's
+        // output samples instead of the full tile (12.99 → ~1 ms
+        // iDWT on DX 2800×2288 256² per V10_24 Phase 0 / projection).
+        // The reconstructImage call below receives an explicit
+        // outputDimensionsOverride so the J2KImage is sized to the
+        // region dims without mutating self.outputDimensions.
+        var windowedROIForIDWT: J2KRegion? = nil
+        let is53Reversible: Bool = {
+            if case .irreversible97 = metadata.configuration.waveletFilter {
+                return false
+            }
+            return true
+        }()
+        // v10.15.0 — gated behind J2K_WINDOWED_IDWT=1 env flag.
+        // Default OFF: the production corpus's >3 MP fixtures are
+        // multi-tile (per the encoder's .auto policy from v6.0.0),
+        // and the v10.7.0 tile-granular skip already short-circuits
+        // off-region tiles. For TRULY single-tile codestreams (the
+        // narrow case this windowed path targets), the env-flag
+        // opt-in enables the windowed iDWT and produces region-sized
+        // output directly. See V10_24_WindowedIDWTParityTests for
+        // bit-exactness across the supported configurations.
+        let windowedEnabled = ProcessInfo.processInfo
+            .environment["J2K_WINDOWED_IDWT"] == "1"
+        if windowedEnabled,
+           let roi = regionOfInterest,
+           partialResolutionLevel == nil,
+           is53Reversible,
+           metadata.componentCount == 1,
+           metadata.components[0].subsamplingX == 1,
+           metadata.components[0].subsamplingY == 1 {
+            windowedROIForIDWT = roi
+        }
+        var spatialData = try await applyInverseWaveletTransform(
+            dequantizedSubbands, metadata: metadata,
+            windowedROI: windowedROIForIDWT)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordInverseWaveletTransform(dt / 1000)
@@ -1144,7 +1202,17 @@ struct DecoderPipeline: Sendable {
         // Stage 7: Image reconstruction
         reportProgress(progress, stage: .imageReconstruction, stageProgress: 0.0)
         t0 = DispatchTime.now()
-        let image = try reconstructImage(rgbData, metadata: metadata)
+        // v10.15.0 — pass the windowed-ROI dims so reconstructImage
+        // sizes the J2KImage to the region (override takes precedence
+        // over self.outputDimensions / metadata dims).
+        let windowedOverride: (width: Int, height: Int)? = {
+            if let roi = windowedROIForIDWT {
+                return (width: roi.width, height: roi.height)
+            }
+            return nil
+        }()
+        let image = try reconstructImage(rgbData, metadata: metadata,
+                                         outputDimensionsOverride: windowedOverride)
         do {
             let dt = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000
             J2KDecodeTimings.recordReconstructImage(dt / 1000)
@@ -4272,7 +4340,13 @@ struct DecoderPipeline: Sendable {
         // (0, 0) preserves single-tile and 32-aligned multi-tile
         // decode byte-for-byte.
         tileOriginX: Int = 0,
-        tileOriginY: Int = 0
+        tileOriginY: Int = 0,
+        // v10.15.0 — when set, the 5/3 lossless path routes through
+        // the windowed multi-level inverse (J2KDWT2DWindowed.swift),
+        // producing only the region's samples. Single-tile,
+        // single-component, no-partial-res, 5/3 reversible, origin
+        // (0,0) eligibility is enforced by the caller.
+        windowedROI: J2KRegion? = nil
     ) async throws -> [[Double]] {
         let filter = metadata.configuration.waveletFilter
         let levels = metadata.configuration.decompositionLevels
@@ -4808,6 +4882,30 @@ struct DecoderPipeline: Sendable {
                     let truncatedSubbands = (effectiveLevels < levelSubbands53.count)
                         ? Array(levelSubbands53.prefix(effectiveLevels))
                         : levelSubbands53
+
+                    // v10.15.0 — ROI Stage 3 windowed iDWT eligibility gate.
+                    // When `windowedROI` is set (passed by single-tile ROI
+                    // path that has already vetted the eligibility:
+                    // 5/3 reversible, single component, subsampling 1:1,
+                    // no partial-res, no multi-tile, origin 0,0), we
+                    // produce ONLY the windowed region's output. The
+                    // existing inverseTransformMultiLevel53 stays
+                    // untouched — additive surface only.
+                    if let windowedRegion = windowedROI,
+                       tcx0 == 0, tcy0 == 0,
+                       effectiveLevels == levelSubbands53.count {
+                        let windowedResult = await optimizer.inverseTransformWindowedMultiLevel53(
+                            ll: llFlat, llW: expectedLLW, llH: expectedLLH,
+                            subbands: truncatedSubbands,
+                            outputRegion: windowedRegion)
+                        let n = windowedResult.data.count
+                        var out = [Double](repeating: 0.0, count: n)
+                        windowedResult.data.withUnsafeBufferPointer { src in
+                            vDSP_vflt32D(src.baseAddress!, 1, &out, 1, vDSP_Length(n))
+                        }
+                        return out
+                    }
+
                     let result = try await optimizer.inverseTransformMultiLevel53(
                         ll: llFlat, llW: expectedLLW, llH: expectedLLH,
                         subbands: truncatedSubbands,
@@ -5546,7 +5644,14 @@ struct DecoderPipeline: Sendable {
     /// Reconstructs the final J2KImage from component data.
     private func reconstructImage(
         _ components: [[Double]],
-        metadata: CodestreamMetadata
+        metadata: CodestreamMetadata,
+        // v10.15.0 — per-call override for the windowed-iDWT ROI
+        // path (set in decodeSingleTile when single-tile ROI fires).
+        // Bypasses `self.outputDimensions` for callers that produce
+        // region-sized data without mutating pipeline state. Default
+        // nil preserves the existing v10.5.0 partial-resolution
+        // behaviour (uses `outputDimensions` from `self`).
+        outputDimensionsOverride: (width: Int, height: Int)? = nil
     ) throws -> J2KImage {
         var imageComponents: [J2KComponent] = []
 
@@ -5555,8 +5660,12 @@ struct DecoderPipeline: Sendable {
         // active. The truncated iDWT has already produced reduced-
         // dimension component data; the J2KImage and its components
         // must carry the reduced dimensions to stay consistent.
-        let effectiveWidth = outputDimensions?.width ?? metadata.width
-        let effectiveHeight = outputDimensions?.height ?? metadata.height
+        // v10.15.0 — outputDimensionsOverride takes precedence over
+        // self.outputDimensions for per-call ROI sizing.
+        let effectiveWidth = outputDimensionsOverride?.width
+            ?? outputDimensions?.width ?? metadata.width
+        let effectiveHeight = outputDimensionsOverride?.height
+            ?? outputDimensions?.height ?? metadata.height
 
         func clampRoundedToInt32(_ value: Double) -> Int32 {
             let rounded = value.rounded()
