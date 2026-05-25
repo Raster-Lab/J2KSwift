@@ -75,6 +75,28 @@ public actor JP3DROIDecoder {
         self.configuration = configuration
     }
 
+    // MARK: - Pre-warm
+
+    /// Warm the shared Metal session before the first JP3D ROI decode
+    /// in a process.
+    ///
+    /// Equivalent to ``JP3DDecoder/preWarm(includeWarmupDispatch:)``
+    /// — both ROI and full-volume JP3D decoders share the same
+    /// process-wide Metal session via the per-slice 2D `J2KDecoder`
+    /// delegation. Provided here as a discoverable convenience so
+    /// callers using `JP3DROIDecoder` directly don't have to import
+    /// `J2KCodec` separately.
+    ///
+    /// Cold-vs-warm A/B savings are the same as `JP3DDecoder.preWarm()`
+    /// — see that method's docs.
+    ///
+    /// - Parameter includeWarmupDispatch: when `true`, runs a tiny
+    ///   synthetic 2D decode for an extra ~10 ms savings on the
+    ///   first user JP3D ROI decode. Default `false`.
+    public static func preWarm(includeWarmupDispatch: Bool = false) async {
+        await JP3DDecoder.preWarm(includeWarmupDispatch: includeWarmupDispatch)
+    }
+
     // MARK: - Public API
 
     /// Sets the progress reporting callback.
