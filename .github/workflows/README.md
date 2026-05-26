@@ -1,194 +1,59 @@
 # CI/CD Workflows
 
-This directory contains GitHub Actions workflows for J2KSwift.
+This directory contains the J2KSwift GitHub Actions workflows. As of
+2026-05-27, **only cloud-mandatory workflows remain** — everything that
+could run locally was removed to reduce GitHub Actions billing.
 
-## Workflows
+## Remaining cloud workflows
 
-### ✅ CI (`ci.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
+### `release.yml`
+**Triggers**: `push` of `v*` tag, `workflow_dispatch`
+**Runner**: `ubuntu-latest` (Linux — cheap)
 
-Primary continuous integration workflow:
-- **Build and Test (macOS)**: Builds and runs all tests on macOS 15 with Swift 6.2
-- **Build and Test (Linux)**: Builds and runs all tests on Ubuntu with Swift 6.2
-- **SwiftLint**: Enforces code style guidelines
-- SPM dependency caching for faster builds
+Auto-creates the GitHub Release page using `RELEASE_NOTES_vX.Y.Z.md`
+as the body when a `v*` tag is pushed. Cloud-mandatory because it
+uses GitHub's release-creation API.
 
-**Badge**: ![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)
+### `create-release-branches.yml`
+**Triggers**: `workflow_dispatch` only
+**Runner**: `ubuntu-latest` (Linux — cheap)
 
-### 🔨 Swift Build and Test (`swift-build-test.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
+Creates `release/vX.Y.Z` mirror branches from existing tags. Cloud-
+mandatory because it pushes new refs to origin. Manual-dispatch only,
+so zero unsolicited cost.
 
-Tests the project on multiple platforms:
-- **macOS 15**: Full build and test with Swift 6.2
-- **Linux (Ubuntu)**: Cross-platform compatibility testing
+## Workflows removed 2026-05-27
 
-**Badge**: ![Swift Build](https://github.com/Raster-Lab/J2KSwift/actions/workflows/swift-build-test.yml/badge.svg)
+The following workflows were deleted to reduce billing. Their functions
+are preserved through local-test alternatives:
 
-### 📚 Documentation (`documentation.yml`)
-**Triggers**: Push to main, Version tags (v*), Manual
+| Removed workflow | Local replacement |
+|---|---|
+| `ci.yml` (macos-15 Build + Test) | `swift test -c release` |
+| `swift-build-test.yml` (macos-15 Build + Test — duplicate of ci) | same |
+| `code-quality.yml` (macos-15 SwiftLint) | `swiftlint --strict` locally |
+| `conformance.yml` (macos-15 Part-1 + Part-15 conformance, 75-min cap) | `swift test -c release --filter J2K*ConformanceTests` |
+| `jp3d-compliance.yml` (macos-15 JP3D compliance) | `swift test -c release --filter "JP3D\|J2KCompliance"` |
+| `dicomkit-downstream.yml` (macos-15 downstream consumer build) | manual `swift build` of the consumer repo |
+| `performance.yml` (macos-15 benchmarks, 75-min cap) | `swift test -c release --filter "J2KMedicalCorpus*PerformanceTests"` (the mandatory commit gate per `feedback_commit_gate.md`) |
+| `documentation.yml` (macos-15 docs build + pages deploy) | `swift package generate-documentation` locally |
+| `interactive-testing.yml` (macos-15 scheduled / manual) | manual local run |
 
-Automatically generates and publishes documentation to GitHub Pages:
-- Builds DocC documentation for all modules
-- Deploys to GitHub Pages
-- Accessible at: https://raster-lab.github.io/J2KSwift/
+## Restoring a workflow
 
-**Badge**: ![Documentation](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml/badge.svg)
+If you want to bring one back, `git log` will show the deletion commit
+and `git show <sha>:.github/workflows/<name>.yml > .github/workflows/<name>.yml`
+restores the file from history. The original triggers/jobs are
+recoverable verbatim.
 
-### 🔍 Code Quality (`code-quality.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
+## Why this state
 
-Comprehensive code quality checks:
-- **SwiftLint**: Enforces code style guidelines
-- **Security Audit**: Checks for known vulnerabilities
-- **Code Coverage**: Measures test coverage
-- **Package Validation**: Validates Swift package configuration
-
-**Badge**: ![Code Quality](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml/badge.svg)
-
-### 🚀 Release (`release.yml`)
-**Triggers**: Version tags (v*.*.*), Manual
-
-Automated release process:
-- Validates the build
-- Runs all tests
-- Creates GitHub release with notes
-- Publishes release artifacts
-
-**Badge**: ![Release](https://github.com/Raster-Lab/J2KSwift/actions/workflows/release.yml/badge.svg)
-
-### 🏗️ Linux ARM64 CI (`linux-arm64.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
-
-ARM64-specific testing via QEMU emulation:
-- Build and test on ARM64 Linux with Swift 6.2
-- NEON SIMD validation tests
-- ARM64 performance benchmarks
-
-**Badge**: ![Linux ARM64](https://github.com/Raster-Lab/J2KSwift/actions/workflows/linux-arm64.yml/badge.svg)
-
-### 🪟 Windows CI (`windows.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
-
-Windows platform testing:
-- Build and test on Windows with Swift 6.2
-- SPM dependency caching
-- Release build artifacts
-
-**Badge**: ![Windows](https://github.com/Raster-Lab/J2KSwift/actions/workflows/windows.yml/badge.svg)
-
-### ✅ Conformance Gating (`conformance.yml`)
-**Triggers**: Push to main/develop/release, Pull Requests, Manual
-
-ISO/IEC 15444-4 conformance validation:
-- Part 1 (Core) conformance tests
-- Part 15 (HTJ2K) conformance tests
-- Part 10 (JP3D) conformance tests
-- Cross-platform conformance (Linux)
-- Conformance gate — blocks on any conformance failure
-
-**Badge**: ![Conformance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml/badge.svg)
-
-### 📊 Performance Benchmarks (`performance.yml`)
-**Triggers**: Push to main/develop, Pull Requests, Manual
-
-Performance tracking and regression detection:
-- macOS Apple Silicon benchmarks
-- Linux x86-64 benchmarks
-- Linux ARM64 benchmarks (via QEMU)
-- OpenJPEG comparison (when available)
-- Flags regressions >5%
-
-**Badge**: ![Performance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml/badge.svg)
-
-### 🧪 JP3D Compliance (`jp3d-compliance.yml`)
-**Triggers**: Push/PR changes to J2K3D sources or compliance tests, Manual
-
-JP3D (Part 10 / ISO 15444-10) compliance validation against Part 4 conformance criteria:
-- macOS and Linux compliance tests
-- Conformance report generation and upload
-
-**Badge**: ![JP3D Compliance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/jp3d-compliance.yml/badge.svg)
-
-## Configuration Files
-
-### `dependabot.yml`
-Automated dependency updates:
-- Weekly updates for GitHub Actions
-- Weekly updates for Swift Package Manager dependencies
-- Auto-creates PRs with proper labels
-
-## CI/CD Best Practices
-
-### For Contributors
-
-1. **Before pushing**: Ensure all tests pass locally
-   ```bash
-   swift build
-   swift test
-   swiftlint lint
-   ```
-
-2. **Pull Requests**: The CI will automatically run on PRs
-   - All checks must pass before merging
-   - Review bot comments for issues
-
-3. **Breaking changes**: Document in CHANGELOG.md
-
-### For Maintainers
-
-1. **Release Process**:
-   ```bash
-   git tag -a v2.0.0 -m "Release v2.0.0"
-   git push origin v2.0.0
-   ```
-   The release workflow will handle the rest.
-
-2. **Documentation**: Auto-deployed on push to main
-
-3. **Code Quality**: Review reports in workflow artifacts
-
-## Workflow Secrets
-
-No secrets are required for basic workflows. The following permissions are used:
-
-- `GITHUB_TOKEN`: Auto-provided by GitHub Actions
-  - Used for creating releases
-  - Used for publishing to GitHub Pages
-  - Used for posting workflow status
-
-## Troubleshooting
-
-### Workflow fails on macOS
-- Check Swift version compatibility
-- Ensure Xcode is properly configured
-
-### Workflow fails on Linux
-- Verify Linux-compatible code
-- Check for platform-specific dependencies
-
-### SwiftLint failures
-- Run locally: `swiftlint lint --strict`
-- Fix issues or update `.swiftlint.yml`
-
-### Documentation build fails
-- Ensure all public APIs are documented
-- Check for broken DocC syntax
-
-## Adding New Workflows
-
-1. Create a new `.yml` file in this directory
-2. Follow GitHub Actions syntax
-3. Test with `workflow_dispatch` trigger first
-4. Add badge to main README.md
-5. Document in this README
-
-## Status Badges
-
-Add to main README.md:
-```markdown
-[![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml)
-[![Code Quality](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml)
-[![Conformance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/conformance.yml)
-[![Performance](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/performance.yml)
-[![Documentation](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml)
-```
+5 releases were shipped on 2026-05-26 (v10.15.0 → v10.19.0). Each release
+triggered ~14 macos-15 workflow runs (PR open + merge to main + tag
+push), with the per-job timeout configured at 75 minutes. Even at
+typical run times of 8–15 min the day's billing was significant; at
+the 75-min cap it would have been ~$420 for the day. After repeated
+restrictions on triggers didn't move the needle far enough, the
+non-mandatory workflows were deleted entirely. The local commit gate
+(`feedback_commit_gate.md`) carries the actual correctness contract;
+the cloud workflows were redundant verification.

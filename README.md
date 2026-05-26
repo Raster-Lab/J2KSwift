@@ -1,10 +1,17 @@
 # J2KSwift
 
-[![CI](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/ci.yml)
-[![Code Quality](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/code-quality.yml)
-[![Documentation](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml/badge.svg)](https://github.com/Raster-Lab/J2KSwift/actions/workflows/documentation.yml)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+<!-- CI / Code Quality / Documentation badges removed 2026-05-27 along
+     with the underlying GitHub Actions workflows (cost-reduction).
+     Build + test verification now runs locally via
+     `swift test -c release --filter "J2KMedicalCorpus*PerformanceTests|J2KStrictCrossCodecValidationTests"`
+     (the mandatory commit gate per feedback_commit_gate.md). The only
+     remaining cloud workflows are `release.yml` (auto-creates the
+     GitHub Release on tag push) + `create-release-branches.yml`
+     (manual-dispatch only). -->
+
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
