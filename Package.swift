@@ -60,6 +60,16 @@ let package = Package(
         .library(
             name: "J2KXS",
             targets: ["J2KXS"]),
+        // v10.17.0 — DICOM-bridge helpers product. Phase 1 ships the
+        // Transfer Syntax UID enum + J2KEncodingConfiguration mapping +
+        // codestream sniffer + PhotometricInterpretation enum mirror.
+        // ADR-004 compliant: no DICOM library dependency anywhere in
+        // J2KSwift; this product depends only on J2KCore + J2KCodec.
+        // Consumers who don't need DICOM ergonomics simply don't import
+        // J2KDICOMHelpers.
+        .library(
+            name: "J2KDICOMHelpers",
+            targets: ["J2KDICOMHelpers"]),
         .executable(
             name: "j2k",
             targets: ["J2KCLI"]),
@@ -173,6 +183,12 @@ let package = Package(
         .target(
             name: "J2KXS",
             dependencies: ["J2KCore"]),
+        // v10.17.0 — DICOM-bridge helpers. Pure additive surface,
+        // ADR-004 compliant: depends only on J2KCore + J2KCodec.
+        // No DICOM library dependency introduced.
+        .target(
+            name: "J2KDICOMHelpers",
+            dependencies: ["J2KCore", "J2KCodec"]),
         .testTarget(
             name: "J2KCoreTests",
             dependencies: ["J2KCore", "J2KFileFormat"]),
@@ -207,6 +223,10 @@ let package = Package(
         .testTarget(
             name: "J2KXSTests",
             dependencies: ["J2KXS", "J2KCore"]),
+        // v10.17.0 — J2KDICOMHelpers Phase 1 test target.
+        .testTarget(
+            name: "J2KDICOMHelpersTests",
+            dependencies: ["J2KDICOMHelpers", "J2KCore", "J2KCodec"]),
         .testTarget(
             name: "J2KComplianceTests",
             dependencies: ["J2K3D", "J2KCore"]),
