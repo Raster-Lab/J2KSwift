@@ -9,9 +9,11 @@ name: DICOMKit Downstream Build
 # follow-on once the build gate stabilises (DICOMKit has 9 pre-existing
 # unrelated test failures unrelated to J2KSwift — see CROSS_CODEC_DICOM_REPORT.md).
 
+# 2026-05-27 — cost-reduction: dropped push triggers. Downstream
+# build is a macOS-15 job; the merge commit after a PR already ran
+# it on the PR, so the post-merge push triggered a duplicate
+# without catching new issues. PR trigger retained as the gate.
 on:
-  push:
-    branches: [ main, develop, 'release/*' ]
   pull_request:
     branches: [ main, develop, 'release/*' ]
   workflow_dispatch:

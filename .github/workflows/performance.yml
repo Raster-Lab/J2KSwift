@@ -1,11 +1,21 @@
 name: Performance Benchmarks
 
+# 2026-05-27 — cost-reduction: this workflow runs a 75-min macOS-15
+# job per trigger; with our release velocity (5 releases / day at
+# the recent peak) the per-push + per-PR triggers were driving the
+# bulk of GitHub Actions billing. Restricted to:
+#   - workflow_dispatch  (manually triggered from the Actions UI)
+#   - schedule (weekly Sunday 03:00 UTC) — catches perf drift on a
+#     bounded cadence
+# Tag pushes do NOT trigger this anymore — release flows are gated
+# by the local `J2KMedicalCorpus*PerformanceTests` (per the
+# mandatory commit gate in feedback_commit_gate.md), so per-release
+# perf coverage is preserved at zero cloud cost.
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
   workflow_dispatch:
+  schedule:
+    # Weekly: Sunday at 03:00 UTC
+    - cron: "0 3 * * 0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

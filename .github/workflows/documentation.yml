@@ -1,8 +1,11 @@
 name: Documentation
 
+# 2026-05-27 — cost-reduction: dropped branch push trigger. Docs
+# rebuild on every main commit was driving extra macOS-15 minutes
+# without consumer-visible value between releases. Now only fires
+# on tag push (one rebuild per release) + manual dispatch.
 on:
   push:
-    branches: [ main ]
     tags: [ 'v*' ]
   workflow_dispatch:
 

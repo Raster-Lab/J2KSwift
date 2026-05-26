@@ -1,8 +1,10 @@
 name: Swift Build and Test
 
+# 2026-05-27 — cost-reduction: dropped push triggers. This workflow
+# overlaps with ci.yml (also runs Build + Test on macos-15); on
+# every push we'd fire BOTH for the same job. PR trigger retained
+# so it still gates merges; ci.yml carries the post-merge coverage.
 on:
-  push:
-    branches: [ main, develop, 'release/*' ]
   pull_request:
     branches: [ main, develop, 'release/*' ]
   workflow_dispatch:

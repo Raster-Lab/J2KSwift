@@ -1,8 +1,12 @@
 name: Conformance Gating
 
+# 2026-05-27 — cost-reduction: dropped push triggers. The conformance
+# suite is a 75-min macOS-15 job; running it on EVERY push (including
+# the merge commit after a PR which already ran it) double-charged
+# without catching anything new. PR trigger is retained — it's the
+# real gate. workflow_dispatch lets a human re-run after a merge if
+# in doubt.
 on:
-  push:
-    branches: [ main, develop, 'release/*' ]
   pull_request:
     branches: [ main, develop, 'release/*' ]
   workflow_dispatch:
