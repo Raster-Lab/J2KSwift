@@ -531,3 +531,128 @@ public actor JP3DDecoder {
         }
     }
 }
+
+// MARK: - v10.16.0 — Discoverable partial-decode convenience overloads
+//
+// The JP3D partial-decode capabilities have existed since v10.18-research
+// (partial-resolution via `JP3DDecoderConfiguration.resolutionLevel`,
+// true-ROI via `JP3DROIDecoder`, K+ROI composition via v10.13.0) but the
+// canonical `JP3DDecoder` exposed only a single `decode(_:)` entry point.
+// Consumers had to know to:
+//
+//   * Construct a `JP3DDecoderConfiguration(resolutionLevel: K)` for
+//     partial-res, OR
+//   * Switch to `JP3DROIDecoder` for ROI, OR
+//   * Combine both for K+ROI.
+//
+// The overloads below expose these as discoverable shortcuts on the
+// canonical `JP3DDecoder` type. They are thin wrappers around the
+// existing pipelines — no perf change on existing paths; the speedups
+// they surface are those already shipped in v10.18-research / v10.13.0.
+
+extension JP3DDecoder {
+    /// v10.16.0 — convenience overload to decode at a reduced resolution level.
+    ///
+    /// At `level == 0` this is identical to ``decode(_:)``. At `level > 0` the output
+    /// volume dimensions per spatial axis are `ceil(D / 2^level)` (Z is independently
+    /// capped by the codestream's Z decomposition levels).
+    ///
+    /// Backed by the true-partial-resolution pipeline (v10.18-research) — the codec
+    /// truncates each slice's iDWT chain rather than decoding then downsampling. On
+    /// small-mid JP3D fixtures, level-1 decode measures **2.2-3.1× faster** than full
+    /// decode (per v10.18-research bench).
+    ///
+    /// Equivalent to:
+    /// ```swift
+    /// let cfg = JP3DDecoderConfiguration(resolutionLevel: level, ...)
+    /// try await JP3DDecoder(configuration: cfg).decode(data)
+    /// ```
+    /// but discoverable from the canonical JP3DDecoder API surface.
+    ///
+    /// - Parameters:
+    ///   - data: The JP3D codestream produced by `JP3DEncoder`.
+    ///   - level: The number of decomposition levels to drop. `0` ⇒ full resolution.
+    ///            Negative values are clamped to `0`; values above the codestream's
+    ///            decomposition depth are clamped by the underlying pipeline.
+    /// - Returns: A `JP3DDecoderResult` whose `volume` carries the reduced-resolution
+    ///            sub-volume.
+    /// - Throws: ``J2KError/decodingError(_:)`` if the codestream is malformed.
+    public func decode(_ data: Data, resolutionLevel level: Int) async throws -> JP3DDecoderResult {
+        let clampedLevel = max(0, level)
+        // Fast path: when the actor's own configuration already matches the
+        // requested level, dispatch straight to the existing decode pipeline.
+        if clampedLevel == self.configuration.resolutionLevel {
+            return try await self.decode(data)
+        }
+        // Otherwise spin up a transient decoder with a tweaked configuration.
+        // The bulk of the per-call cost is the codec itself; the actor +
+        // configuration storage is essentially free.
+        let cfg = JP3DDecoderConfiguration(
+            maxQualityLayers: self.configuration.maxQualityLayers,
+            resolutionLevel: clampedLevel,
+            tolerateErrors: self.configuration.tolerateErrors)
+        return try await JP3DDecoder(configuration: cfg).decode(data)
+    }
+
+    /// v10.16.0 — convenience overload to decode a spatial region of interest.
+    ///
+    /// Backed by the v10.13.0 tile-granular ROI pipeline: tiles outside the requested
+    /// region are skipped entirely (no entropy / iDWT / colour-transform cost).
+    /// Measured **3.4-4.1× faster** than full decode for ~1/4-extent regions on small
+    /// JP3D fixtures (per v10.18-research bench).
+    ///
+    /// Equivalent to `JP3DROIDecoder(configuration: self.configuration).decode(data, region: region)`,
+    /// but discoverable from the canonical JP3DDecoder type. The actor's own
+    /// configuration is forwarded so e.g. `tolerateErrors` and `maxQualityLayers`
+    /// propagate.
+    ///
+    /// - Parameters:
+    ///   - data: The JP3D codestream produced by `JP3DEncoder`.
+    ///   - region: The spatial region (in full-image voxel coordinates) to decode.
+    /// - Returns: A `JP3DROIDecoderResult` carrying the sub-volume plus
+    ///            ROI-specific metadata (`decodedRegion`, `isFullVolume`,
+    ///            `tilesSkipped`, `tilesDecoded`).
+    /// - Throws: ``J2KError/decodingError(_:)`` if the codestream is malformed.
+    public func decode(_ data: Data, region: JP3DRegion) async throws -> JP3DROIDecoderResult {
+        let roi = JP3DROIDecoder(configuration: self.configuration)
+        return try await roi.decode(data, region: region)
+    }
+
+    /// v10.16.0 — convenience overload combining resolution reduction and ROI.
+    ///
+    /// Returns the in-region sub-volume at `2^level`-down dimensions per spatial axis.
+    /// The region coordinates are in full-image voxel space (matches the
+    /// `J2KDecoder.decodeRegion(.direct)` convention from v10.6/v10.8). The bridge
+    /// maps them to the reduced grid for crop. Closes the v10.13.0 {K, ROI}
+    /// composition matrix behind a single discoverable API.
+    ///
+    /// Equivalent to:
+    /// ```swift
+    /// let cfg = JP3DDecoderConfiguration(resolutionLevel: level, ...)
+    /// try await JP3DROIDecoder(configuration: cfg).decode(data, region: region)
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - data: The JP3D codestream produced by `JP3DEncoder`.
+    ///   - region: The spatial region (in full-image voxel coordinates).
+    ///   - level: The number of decomposition levels to drop. `0` ⇒ full resolution
+    ///            within the region (equivalent to ``decode(_:region:)``).
+    /// - Returns: A `JP3DROIDecoderResult`.
+    /// - Throws: ``J2KError/decodingError(_:)`` if the codestream is malformed.
+    public func decode(
+        _ data: Data,
+        region: JP3DRegion,
+        resolutionLevel level: Int
+    ) async throws -> JP3DROIDecoderResult {
+        let clampedLevel = max(0, level)
+        if clampedLevel == self.configuration.resolutionLevel {
+            return try await self.decode(data, region: region)
+        }
+        let cfg = JP3DDecoderConfiguration(
+            maxQualityLayers: self.configuration.maxQualityLayers,
+            resolutionLevel: clampedLevel,
+            tolerateErrors: self.configuration.tolerateErrors)
+        let roi = JP3DROIDecoder(configuration: cfg)
+        return try await roi.decode(data, region: region)
+    }
+}
