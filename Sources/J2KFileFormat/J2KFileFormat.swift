@@ -586,6 +586,58 @@ public struct J2KFileWriter: Sendable {
         }
     }
 
+    /// v10.23.0 — wraps an existing J2K codestream into the writer's
+    /// configured box format WITHOUT re-encoding.
+    ///
+    /// Use this when you've already encoded via ``J2KEncoder`` (with a
+    /// rich ``J2KEncodingConfiguration``: HTJ2K, multi-tile, custom
+    /// quality layers, etc.) and want the box-wrapped bytes. The
+    /// existing ``write(_:to:configuration:)`` re-encodes the image
+    /// internally via the simpler ``J2KConfiguration`` and is the
+    /// right call when you want a one-shot encode + write with default
+    /// settings — `wrap` is the right call when you need control over
+    /// the codestream encoding.
+    ///
+    /// For `.j2k` format, returns the codestream bytes unchanged
+    /// (no boxes). For `.jp2`/`.jph`/`.jpx`/`.jpm`, wraps via the
+    /// canonical box-building helpers (signature + filetype + JP2
+    /// header + jp2c contiguous codestream box, per ISO/IEC 15444-1
+    /// §I.4).
+    ///
+    /// - Parameters:
+    ///   - codestream: A complete J2K codestream (starting with SOC
+    ///     `0xFF 0x4F`) — typically the result of
+    ///     `try await J2KEncoder(...).encode(image)`.
+    ///   - image: The source image; used to populate the JP2 Header
+    ///     box's `ihdr` (Image Header) sub-box with dimensions,
+    ///     component count, and bit depth.
+    /// - Returns: The box-wrapped bytes ready to write to a `.jp2` /
+    ///   `.jph` / etc. file (or hand to any consumer expecting the
+    ///   given format).
+    /// - Throws: ``J2KError/invalidParameter(_:)`` if the image is
+    ///   invalid; ``J2KError`` variants from the box writer.
+    public func wrap(codestream: Data, headerForImage image: J2KImage) throws -> Data {
+        guard image.width > 0, image.height > 0 else {
+            throw J2KError.invalidParameter(
+                "Image must have positive dimensions (got \(image.width)x\(image.height))")
+        }
+        guard !image.components.isEmpty else {
+            throw J2KError.invalidParameter("Image must have at least one component")
+        }
+        switch format {
+        case .j2k:
+            return codestream
+        case .jp2:
+            return try buildJP2File(image: image, codestream: codestream)
+        case .jph:
+            return try buildJPHFile(image: image, codestream: codestream)
+        case .jpx:
+            return try buildJPXFile(image: image, codestream: codestream)
+        case .jpm:
+            return try buildJPMFile(image: image, codestream: codestream)
+        }
+    }
+
     // MARK: - Private Methods
 
     /// Builds a JP2 file with proper box structure.
