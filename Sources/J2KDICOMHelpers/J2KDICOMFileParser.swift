@@ -100,6 +100,144 @@ public enum J2KDICOMFileParser {
         return .j2kCompressed(metadata: metadata, pixelDataBytes: pixelDataBytes)
     }
 
+    /// v10.24.0 — Phase 3.1 — parse a DICOM file and ALWAYS return the
+    /// Pixel Data bytes, even for non-J2K transfer syntaxes.
+    ///
+    /// Sibling to ``parse(_:)`` (v10.21.0) that returns the richer
+    /// ``J2KDICOMFileWithPixelData`` shape. The discrimination
+    /// (`.j2kCompressed` vs `.uncompressed`) is preserved so consumers
+    /// know whether to hand off to ``J2KDICOMPixelDataDecapsulator`` +
+    /// ``J2KDecoder`` (for the J2K variant) or to use their own DICOM
+    /// library's pixel-data layout handling (for the uncompressed
+    /// variant — planar configuration, mosaic frames, endianness
+    /// conversion to their target use, etc.).
+    ///
+    /// For uncompressed pixel data this method computes the expected
+    /// byte count as
+    /// `rows × columns × samplesPerPixel × bytesPerSample × numberOfFrames`
+    /// and slices that many bytes from the file. If the source has
+    /// fewer bytes available than declared, throws
+    /// ``J2KDICOMFileError/truncatedFile(expectedAtLeast:got:)``.
+    ///
+    /// - Parameter data: Complete `.dcm` file bytes (preamble + DICM
+    ///   + group 0002 + dataset).
+    /// - Returns: A ``J2KDICOMFileWithPixelData`` carrying metadata
+    ///   AND pixel data bytes.
+    /// - Throws: ``J2KDICOMFileError`` on malformed input.
+    public static func parseExtractingPixelData(
+        _ data: Data
+    ) throws -> J2KDICOMFileWithPixelData {
+        // Reuse the existing parse flow up to + including locating the
+        // Pixel Data element. Then extract bytes for both branches.
+        try validatePreamble(data)
+        let (transferSyntaxUID, postGroup0002Offset) = try parseFileMetaInformation(data)
+        let j2kTransferSyntax = J2KDICOMTransferSyntax(uid: transferSyntaxUID)
+        let endianness = endiannessForUID(transferSyntaxUID)
+        let (metadata, pixelDataOffset, pixelDataLength) = try parseDataset(
+            data,
+            startOffset: postGroup0002Offset,
+            transferSyntaxUID: transferSyntaxUID,
+            isExplicitVR: endianness.isExplicitVR,
+            isBigEndian: endianness.isBigEndian)
+
+        // For J2K-tagged transfer syntaxes, extract the encapsulated
+        // Pixel Data Item sequence (same logic as parse(_:)).
+        if j2kTransferSyntax != nil {
+            let bytes = try extractJ2KEncapsulatedPixelData(
+                data,
+                pixelDataOffset: pixelDataOffset,
+                pixelDataLength: pixelDataLength,
+                isBigEndian: endianness.isBigEndian)
+            return .j2kCompressed(metadata: metadata, pixelDataBytes: bytes)
+        }
+
+        // For non-J2K transfer syntaxes, extract the uncompressed raw
+        // bytes. Compute expected size from the metadata and slice.
+        let bytes = try extractUncompressedPixelData(
+            data,
+            pixelDataOffset: pixelDataOffset,
+            pixelDataLength: pixelDataLength,
+            metadata: metadata)
+        return .uncompressed(metadata: metadata, pixelDataBytes: bytes)
+    }
+
+    /// Extracts the J2K-tagged encapsulated Pixel Data byte stream.
+    /// Factored out so `parse(_:)` and `parseExtractingPixelData(_:)`
+    /// share the same logic.
+    private static func extractJ2KEncapsulatedPixelData(
+        _ data: Data,
+        pixelDataOffset: Int,
+        pixelDataLength: Int,
+        isBigEndian: Bool
+    ) throws -> Data {
+        if pixelDataLength == 0xFFFF_FFFF {
+            let end = scanToSequenceEnd(
+                data, from: pixelDataOffset, bigEndian: isBigEndian)
+            let start = data.startIndex + pixelDataOffset
+            let stop = data.startIndex + end
+            guard stop <= data.endIndex else {
+                throw J2KDICOMFileError.truncatedFile(
+                    expectedAtLeast: end, got: data.count)
+            }
+            return data.subdata(in: start..<stop)
+        } else {
+            let start = data.startIndex + pixelDataOffset
+            let stop = start + pixelDataLength
+            guard stop <= data.endIndex else {
+                throw J2KDICOMFileError.truncatedFile(
+                    expectedAtLeast: pixelDataOffset + pixelDataLength,
+                    got: data.count)
+            }
+            return data.subdata(in: start..<stop)
+        }
+    }
+
+    /// Extracts uncompressed Pixel Data bytes (raw, source byte order).
+    /// Uses the metadata's derived `frameSizeInBytes × numberOfFrames`
+    /// when the declared length is unusable (`0xFFFF_FFFF` undefined,
+    /// or zero / negative which shouldn't happen for uncompressed but
+    /// is defensively handled).
+    private static func extractUncompressedPixelData(
+        _ data: Data,
+        pixelDataOffset: Int,
+        pixelDataLength: Int,
+        metadata: J2KDICOMFileMetadata
+    ) throws -> Data {
+        // Compute expected total byte count from the image-pixel-module
+        // attributes.
+        let totalExpectedBytes = metadata.frameSizeInBytes * max(1, metadata.numberOfFrames)
+        guard totalExpectedBytes > 0 else {
+            // Defensive: metadata didn't yield a positive expected size
+            // (zero-dim image or zero-sample-per-pixel). Return an
+            // empty slice rather than risk a misleading throw.
+            return Data()
+        }
+
+        // Validate: we always need at least totalExpectedBytes available
+        // beyond pixelDataOffset. The Pixel Data element's declared
+        // length (when present and not the encapsulation marker
+        // 0xFFFF_FFFF) must also be at least totalExpectedBytes —
+        // DICOM Image-Pixel-Module attributes are the source of truth
+        // for uncompressed pixel count; a declared length less than that
+        // means the source is malformed / truncated.
+        let encapsulationMarker = Int(0xFFFF_FFFF)  // u32 max as Int
+        let availableBytes = data.count - pixelDataOffset
+        if pixelDataLength != encapsulationMarker
+            && pixelDataLength > 0
+            && pixelDataLength < totalExpectedBytes {
+            throw J2KDICOMFileError.truncatedFile(
+                expectedAtLeast: totalExpectedBytes,
+                got: pixelDataLength)
+        }
+        guard availableBytes >= totalExpectedBytes else {
+            throw J2KDICOMFileError.truncatedFile(
+                expectedAtLeast: pixelDataOffset + totalExpectedBytes,
+                got: data.count)
+        }
+        let start = data.startIndex + pixelDataOffset
+        return data.subdata(in: start..<(start + totalExpectedBytes))
+    }
+
     // MARK: - Private helpers
 
     /// Minimum DICOM file size: 128-byte preamble + 4-byte DICM magic.
