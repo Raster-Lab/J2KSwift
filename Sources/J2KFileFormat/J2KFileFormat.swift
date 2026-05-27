@@ -348,8 +348,30 @@ public struct J2KFileReader: Sendable {
         return try parseCodestream(codestreamData)
     }
 
-    /// Extracts the codestream from a box-based format.
-    private func extractCodestream(from data: Data) throws -> Data {
+    /// Extracts the J2K codestream from JP2/JPX/JPM/JPH box-format bytes.
+    ///
+    /// Walks the box hierarchy looking for the Contiguous Codestream box
+    /// (`jp2c`, four-CC `6A 70 32 63`) and returns its contents (the raw
+    /// J2K codestream starting with the SOC marker `0xFF 0x4F`).
+    ///
+    /// Handles both standard 4-byte box lengths and extended 8-byte
+    /// lengths (PS-15441-1 §I.4 — `length == 1` indicates the 8 bytes
+    /// that follow carry the real length; `length == 0` means the box
+    /// extends to end-of-file).
+    ///
+    /// - Parameter data: JP2 / JPX / JPM / JPH file or in-memory bytes.
+    /// - Returns: The J2K codestream bytes (suitable to pass directly
+    ///            to ``J2KDecoder/decode(_:)``).
+    /// - Throws: ``J2KError/invalidData(_:)`` when the input doesn't
+    ///           contain a `jp2c` box or the declared box length runs
+    ///           past the buffer.
+    ///
+    /// v10.22.0 made this public — previously it was a private helper
+    /// inside ``read(from:)``. Consumers who want the raw codestream
+    /// (e.g., to re-wrap into DICOM Pixel Data, feed to JPIP, or
+    /// decode via ``J2KDecoder/decodeRegion(_:options:)``) can now
+    /// extract it directly without rolling their own box walker.
+    public func extractCodestream(from data: Data) throws -> Data {
         var offset = 0
 
         while offset + 8 <= data.count {
