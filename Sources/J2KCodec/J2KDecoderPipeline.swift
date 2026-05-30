@@ -3510,21 +3510,57 @@ struct DecoderPipeline: Sendable {
             let componentBitDepths = metadata.components.map { $0.bitDepth }
             let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
 
-            // Parallel decode using structured concurrency with chunking
+            // Parallel decode using structured concurrency.
+            //
+            // v10.25 — load-balanced + oversubscribed + P-core-biased entropy
+            // scheduling. The previous design split blocks into exactly
+            // `coreCount` *contiguous* chunks (`chunkSize = blockCount /
+            // coreCount`). Code-block decode cost is highly skewed (dense LL /
+            // low-frequency blocks vs near-empty HH), and blocks arrive in
+            // resolution/packet order, so expensive blocks clustered into a few
+            // chunks → the slowest chunk gated the whole stage while other cores
+            // sat idle (~2.9 of 8 cores effective on M2, measured). And the
+            // tasks ran at default priority, so they spilled onto M-series
+            // E-cores (3–4× slower than P-cores).
+            //
+            // Fix (bit-exact — output is keyed by block index, so work
+            // *distribution* is free to change): distribute blocks across
+            // `2 × coreCount` buckets using LPT (longest-processing-time-first):
+            // sort blocks by descending estimated cost (encoded byte length is a
+            // good proxy for entropy-decode work) and greedily assign each to the
+            // least-loaded bucket. Oversubscription + greedy balancing keeps the
+            // tail short; `.high` task priority biases the work onto P-cores.
+            // This is the decode-side analogue of the encoder's Tier1ChunkPlan.
             let coreCount = ProcessInfo.processInfo.processorCount
-            let chunkSize = max(1, blockCount / coreCount)
+            let bucketCount = min(blockCount, max(1, coreCount * 2))
+            let buckets: [[Int]] = {
+                var b = [[Int]](repeating: [], count: bucketCount)
+                var load = [Int](repeating: 0, count: bucketCount)
+                // GPU-pre-decoded blocks cost ~nothing here (just a copy); weight
+                // them at 1 so they don't distort balancing.
+                let order = (0..<blockCount).sorted {
+                    (gpuPreDecoded[$0] == nil ? blocks[$0].data.count : 0)
+                        > (gpuPreDecoded[$1] == nil ? blocks[$1].data.count : 0)
+                }
+                for idx in order {
+                    var lo = 0
+                    for k in 1..<bucketCount where load[k] < load[lo] { lo = k }
+                    b[lo].append(idx)
+                    load[lo] += (gpuPreDecoded[idx] == nil ? max(1, blocks[idx].data.count) : 1)
+                }
+                return b
+            }()
 
             let allResults: [([Int32], [Bool])?] = try await withThrowingTaskGroup(
                 of: [(Int, [Int32], [Bool])].self
             ) { group in
-                for chunkStart in stride(from: 0, to: blockCount, by: chunkSize) {
-                    let chunkEnd = min(chunkStart + chunkSize, blockCount)
-                    group.addTask {
+                for bucket in buckets where !bucket.isEmpty {
+                    group.addTask(priority: .high) {
                         var chunkResults: [(Int, [Int32], [Bool])] = []
-                        chunkResults.reserveCapacity(chunkEnd - chunkStart)
-                        // One scratch buffer per task — reused across all blocks in the chunk
+                        chunkResults.reserveCapacity(bucket.count)
+                        // One scratch buffer per task — reused across all blocks in the bucket
                         let scratch = useHT ? nil : DecoderScratchBuffers()
-                        for i in chunkStart..<chunkEnd {
+                        for i in bucket {
                             // Skip blocks already decoded on GPU. The
                             // empty `htPartiallyRefined` mask matches the
                             // `useConformant` cleanup-only branch below
