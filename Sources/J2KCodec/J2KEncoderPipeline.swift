@@ -3941,11 +3941,23 @@ struct EncoderPipeline: Sendable {
                 let bandKb: Int
                 let subbandStepSize: Float
                 if config.useReversibleFilter {
+                    // Conformant HT path: use the reversible-5/3-safe magnitude
+                    // window gain (matches OpenJPH; prevents the deep-LL / RCT
+                    // coefficient-overflow data-loss bug). This MUST match the
+                    // ε signalled by `writeQCDMarker` for the same subband so
+                    // the per-block `mag << (31 - K_max)` shift and the decoder
+                    // agree. Custom HT block format keeps the legacy gain.
                     let gainExponent: Int
-                    switch info.subband {
-                    case .ll: gainExponent = 0
-                    case .hl, .lh: gainExponent = 1
-                    case .hh: gainExponent = 2
+                    if config.htj2kBlockFormat == .conformant {
+                        let rctActive = config.useReversibleFilter && image.components.count >= 3
+                        gainExponent = Self.htConformantReversibleGain(
+                            subband: info.subband, rctActive: rctActive)
+                    } else {
+                        switch info.subband {
+                        case .ll: gainExponent = 0
+                        case .hl, .lh: gainExponent = 1
+                        case .hh: gainExponent = 2
+                        }
                     }
                     bandKb = imageBitDepth + gainExponent + guardBits - 1
                     subbandStepSize = 1.0  // Identity quantization for lossless
@@ -6497,6 +6509,36 @@ struct EncoderPipeline: Sendable {
     }
 
     /// Writes the QCD marker segment (Quantization Default).
+    /// Magnitude-window gain (bits above the component bit-depth) for a
+    /// reversible 5/3 subband in the **HT Part-15 conformant** path.
+    ///
+    /// The conformant encoder converts coefficients to OpenJPH sign-magnitude
+    /// as `sign | (|v| << (31 - K_max))`, where `K_max = bitDepth + gain`.
+    /// The previous single-level gain `{LL:0, HL/LH:1, HH:2}` undersized the
+    /// window: a multi-level reversible 5/3 transform expands the coefficient
+    /// range (the deep LL band especially), so high-contrast content (e.g.
+    /// 8-bit 0↔255 edges) produces coefficients whose magnitude exceeds
+    /// `2^K_max`. `|v| << shift` then overflows bit 31 (the sign bit) and the
+    /// top bitplane is silently lost — a lossless-mode data-loss bug that
+    /// `OpenJPH` (the reference decoder) reproduces from our codestream,
+    /// confirming the defect is in our encoder, not the decoder.
+    ///
+    /// These values match OpenJPH's proven-sufficient reversible K_max
+    /// (LL = B+1, finest-level detail = B+1, coarser detail = B+2; one more
+    /// bit when the reversible colour transform is active, which widens the
+    /// U/V components by a bit), taking `max` with the previous gain so the
+    /// window can only grow — never shrink below what already round-tripped.
+    /// Level-independent (uses the coarser-band gain for all detail levels)
+    /// to keep the QCD marker and per-block shift trivially consistent.
+    static func htConformantReversibleGain(subband: J2KSubband, rctActive: Bool) -> Int {
+        let rct = rctActive ? 1 : 0
+        switch subband {
+        case .ll:      return max(0, rct + 1)
+        case .hl, .lh: return max(1, rct + 2)
+        case .hh:      return max(2, rct + 2)
+        }
+    }
+
     private func writeQCDMarker(
         _ writer: inout J2KBitWriter,
         image: J2KImage,
@@ -6544,15 +6586,29 @@ struct EncoderPipeline: Sendable {
             let epsilonBias = conformant ? guardBits : 0
             let epsilonConformantAdjust = conformant ? 1 : 0
 
+            // Subband magnitude-window gain. For the conformant HT path use the
+            // reversible-5/3-safe gain (matches OpenJPH; covers multi-level LL
+            // range growth that the old single-level {0,1,2} undersized — see
+            // `htConformantReversibleGain`). Non-conformant (legacy EBCOT /
+            // custom HT) keeps the original {LL:0, HL/LH:1, HH:2} so those
+            // codestreams are byte-identical to before. The per-block shift in
+            // `encodeCodeBlockConformant` derives K_max from the SAME gain, so
+            // encoder and decoder stay consistent via this QCD ε.
+            let rctActive = config.useReversibleFilter && image.components.count >= 3
+            let gLL = conformant ? Self.htConformantReversibleGain(subband: .ll, rctActive: rctActive) : 0
+            let gHL = conformant ? Self.htConformantReversibleGain(subband: .hl, rctActive: rctActive) : 1
+            let gLH = conformant ? Self.htConformantReversibleGain(subband: .lh, rctActive: rctActive) : 1
+            let gHH = conformant ? Self.htConformantReversibleGain(subband: .hh, rctActive: rctActive) : 2
+
             // LL subband at coarsest level
-            let epsilonLL = UInt8(max(1, bitDepth + epsilonConformantAdjust - epsilonBias))
+            let epsilonLL = UInt8(max(1, bitDepth + gLL + epsilonConformantAdjust - epsilonBias))
             segment.writeUInt8(epsilonLL << 3) // Exponent in bits 3-7
 
             // Detail subbands (HL, LH, HH) at each level (from coarsest to finest)
             for _ in 0..<decompositionLevels {
-                let epsilonHL = UInt8(max(1, bitDepth + 1 + epsilonConformantAdjust - epsilonBias)) // G_HL = 1
-                let epsilonLH = UInt8(max(1, bitDepth + 1 + epsilonConformantAdjust - epsilonBias)) // G_LH = 1
-                let epsilonHH = UInt8(max(1, bitDepth + 2 + epsilonConformantAdjust - epsilonBias)) // G_HH = 2
+                let epsilonHL = UInt8(max(1, bitDepth + gHL + epsilonConformantAdjust - epsilonBias))
+                let epsilonLH = UInt8(max(1, bitDepth + gLH + epsilonConformantAdjust - epsilonBias))
+                let epsilonHH = UInt8(max(1, bitDepth + gHH + epsilonConformantAdjust - epsilonBias))
                 segment.writeUInt8(epsilonHL << 3)
                 segment.writeUInt8(epsilonLH << 3)
                 segment.writeUInt8(epsilonHH << 3)
