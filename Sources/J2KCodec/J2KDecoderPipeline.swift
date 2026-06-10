@@ -802,7 +802,10 @@ struct DecoderPipeline: Sendable {
                 for tile in chunk {
                     let captured = tile
                     let metadataCopy = metadata
-                    group.addTask {
+                    // v10.25: `.high` priority — matches the inner
+                    // entropy buckets (v10.24.2); a default-priority
+                    // tile task is E-core-eligible and gates the wall.
+                    group.addTask(priority: .high) {
                         try await self.decodeTilePayloadGPU(
                             metadata: metadataCopy,
                             tileIndex: captured.tileIndex,
@@ -997,7 +1000,9 @@ struct DecoderPipeline: Sendable {
                     let metadataCopy = metadata
                     let tileData = tiles[slot].tileData
                     let tileIndex = info.tileIndex
-                    group.addTask {
+                    // v10.25: `.high` priority — see the sibling
+                    // multi-tile group above.
+                    group.addTask(priority: .high) {
                         try await self.decodeTilePayloadGPU(
                             metadata: metadataCopy,
                             tileIndex: tileIndex,
@@ -1451,22 +1456,54 @@ struct DecoderPipeline: Sendable {
         return DecodedTile(tileX: tileX, tileY: tileY, tileW: tileW, tileH: tileH, rgb: tileRGB)
     }
 
+    /// v10.25 — number of resolution halvings active for partial-
+    /// resolution decode: `N - r` for `partialResolutionLevel = r`
+    /// (clamped to [0, N]), 0 when partial-resolution decode is off.
+    /// The reduced canvas is the full canvas ceil-divided by
+    /// `2^halvings` per ISO/IEC 15444-1 Eq. B-15.
+    private func partialResolutionHalvings(metadata: CodestreamMetadata) -> Int {
+        guard let r = partialResolutionLevel else { return 0 }
+        let levels = metadata.configuration.decompositionLevels
+        return levels - min(max(r, 0), levels)
+    }
+
     /// Composites a decoded tile into the full-image component buffers.
     /// Each tile writes to a non-overlapping rectangle, so calling this
     /// sequentially after all tiles have decoded is safe and fast.
+    ///
+    /// v10.25 multi-tile partial-resolution — when
+    /// `partialResolutionLevel` is active, each tile's `rgb` holds the
+    /// truncated-iDWT output whose dimensions follow the spec ceil-div
+    /// canvas formula at depth `h = N - r`:
+    ///   srcW = ⌈tcx1 / 2^h⌉ - ⌈tcx0 / 2^h⌉   (tcx0/tcx1 = tile-
+    ///   srcH = ⌈tcy1 / 2^h⌉ - ⌈tcy0 / 2^h⌉    component canvas bounds)
+    /// and its destination rectangle in the REDUCED canvas starts at
+    /// (⌈tcx0 / 2^h⌉, ⌈tcy0 / 2^h⌉) with row stride ⌈compW / 2^h⌉.
+    /// Because ceil-div intervals of adjacent tiles share endpoints,
+    /// the reduced tiles partition the reduced canvas exactly — no
+    /// gaps, no overlap. For h = 0 every formula degenerates to the
+    /// historical full-resolution composite.
     private func compositeTile(
         _ tile: DecodedTile,
         into fullComponents: inout [[Double]],
         metadata: CodestreamMetadata
     ) {
+        let halvings = partialResolutionHalvings(metadata: metadata)
+        let f = 1 << halvings
+        func ceilDiv(_ n: Int) -> Int { EncoderPipeline.ceilDivIntegerOrigin(n, f) }
+
         let numComponents = metadata.componentCount
         for compIdx in 0..<min(numComponents, tile.rgb.count) {
             let compInfo = metadata.components[compIdx]
-            let fullW = metadata.width / compInfo.subsamplingX
-            let compTileX = tile.tileX / compInfo.subsamplingX
-            let compTileY = tile.tileY / compInfo.subsamplingY
-            let compTileW = tile.tileW / compInfo.subsamplingX
-            let compTileH = tile.tileH / compInfo.subsamplingY
+            let fullW = ceilDiv(metadata.width / compInfo.subsamplingX)
+            let tcx0 = tile.tileX / compInfo.subsamplingX
+            let tcy0 = tile.tileY / compInfo.subsamplingY
+            let tcx1 = tcx0 + tile.tileW / compInfo.subsamplingX
+            let tcy1 = tcy0 + tile.tileH / compInfo.subsamplingY
+            let compTileX = ceilDiv(tcx0)
+            let compTileY = ceilDiv(tcy0)
+            let compTileW = ceilDiv(tcx1) - compTileX
+            let compTileH = ceilDiv(tcy1) - compTileY
 
             tile.rgb[compIdx].withUnsafeBufferPointer { srcBuf in
                 fullComponents[compIdx].withUnsafeMutableBufferPointer { dstBuf in
@@ -1969,11 +2006,22 @@ struct DecoderPipeline: Sendable {
     ) async throws -> J2KImage {
         let numComponents = metadata.componentCount
 
-        // Prepare full-image component buffers
+        // Prepare full-image component buffers.
+        //
+        // v10.25 multi-tile partial-resolution — when
+        // `partialResolutionLevel` is active the per-tile truncated
+        // iDWT outputs reduced-dimension data, so the canvas buffers
+        // are allocated at the reduced dimensions (ceil-div by
+        // 2^halvings, matching `compositeTile`'s destination mapping
+        // and `reconstructImage`'s `outputDimensions`). halvings = 0
+        // (full decode) preserves the historical allocation exactly.
+        let halvings = partialResolutionHalvings(metadata: metadata)
         var fullComponents: [[Double]] = (0..<numComponents).map { compIdx in
             let compInfo = metadata.components[compIdx]
-            let w = metadata.width / compInfo.subsamplingX
-            let h = metadata.height / compInfo.subsamplingY
+            let w = EncoderPipeline.ceilDivIntegerOrigin(
+                metadata.width / compInfo.subsamplingX, 1 << halvings)
+            let h = EncoderPipeline.ceilDivIntegerOrigin(
+                metadata.height / compInfo.subsamplingY, 1 << halvings)
             return [Double](repeating: 0.0, count: w * h)
         }
 
@@ -2006,7 +2054,9 @@ struct DecoderPipeline: Sendable {
                 for tile in chunk {
                     let captured = tile
                     let metadataCopy = metadata
-                    group.addTask {
+                    // v10.25: `.high` priority — matches the inner
+                    // entropy buckets (v10.24.2).
+                    group.addTask(priority: .high) {
                         try await self.decodeTilePayload(
                             metadata: metadataCopy,
                             tileIndex: captured.tileIndex,
@@ -4690,11 +4740,29 @@ struct DecoderPipeline: Sendable {
                                           hh: hhFlat, hhW: hlW, hhH: lhH))
                 }
 
+                // v10.25 — partial-resolution truncation for the 9/7
+                // path, mirroring the 5/3 path's Stage B.2 semantics.
+                // Without this, partial-resolution decode of an
+                // irreversible codestream ran ALL synthesis levels
+                // (high-res bands zero-filled by the B.1 entropy
+                // filter) and returned full-dimension data behind the
+                // reduced-dimension image header — the same
+                // dims/data-size corruption signature as the
+                // multi-tile composite bug. For a full decode
+                // effectiveLevels == levels and the prefix is the
+                // identity. Note the 9/7 multi-level inverse is not
+                // parity-aware (no canvas-origin handling) even for
+                // full decode — truncation neither adds nor removes
+                // that limitation.
+                let truncatedSubbands97 = (effectiveLevels < levelSubbands.count)
+                    ? Array(levelSubbands.prefix(effectiveLevels))
+                    : levelSubbands
+
                 if useConservativeHighBitDepthPath {
                     var currentLL = to2DDoubleFromDoubles(llFlat, width: expectedLLW, height: expectedLLH)
 
-                    for (index, _) in Array((1...levels).reversed()).enumerated() {
-                        let levelData = levelSubbands[index]
+                    for index in 0..<truncatedSubbands97.count {
+                        let levelData = truncatedSubbands97[index]
                         let lh2D = to2DDoubleFromDoubles(levelData.lh, width: levelData.lhW, height: levelData.lhH)
                         let hl2D = to2DDoubleFromDoubles(levelData.hl, width: levelData.hlW, height: levelData.hlH)
                         let hh2D = to2DDoubleFromDoubles(levelData.hh, width: levelData.hhW, height: levelData.hhH)
@@ -4729,12 +4797,12 @@ struct DecoderPipeline: Sendable {
                     if bitDepth <= 16 {
                         result = await optimizer97.inverseTransformMultiLevel97Float(
                             ll: llFlat, llW: expectedLLW, llH: expectedLLH,
-                            subbands: levelSubbands
+                            subbands: truncatedSubbands97
                         )
                     } else {
                         result = await optimizer97.inverseTransformMultiLevel97(
                             ll: llFlat, llW: expectedLLW, llH: expectedLLH,
-                            subbands: levelSubbands
+                            subbands: truncatedSubbands97
                         )
                     }
 
@@ -4841,13 +4909,22 @@ struct DecoderPipeline: Sendable {
                     // reduced-dimension LL output directly. For
                     // effectiveLevels == 0, the iDWT short-circuits and
                     // returns the deepest LL unchanged.
+                    //
+                    // v10.25 multi-tile partial-resolution —
+                    // `outputDepthOffset` tells the parity-aware
+                    // multi-level inverse that the truncated chain's
+                    // output sits at depth (levels - effectiveLevels),
+                    // not 0, so per-level interleave parity stays
+                    // anchored to the true canvas depth for non-zero
+                    // tile origins. 0 for a full reconstruction.
                     let truncatedSubbands = (effectiveLevels < levelSubbands53.count)
                         ? Array(levelSubbands53.prefix(effectiveLevels))
                         : levelSubbands53
                     let result = try await optimizer.inverseTransformMultiLevel53(
                         ll: llFlat, llW: expectedLLW, llH: expectedLLH,
                         subbands: truncatedSubbands,
-                        tileOriginX: tcx0, tileOriginY: tcy0
+                        tileOriginX: tcx0, tileOriginY: tcy0,
+                        outputDepthOffset: levels - effectiveLevels
                     )
                     // Convert flat [Int32] → [Double] with vDSP (NEON-vectorised on Apple Silicon)
                     let n = result.data.count
@@ -5142,7 +5219,15 @@ struct DecoderPipeline: Sendable {
                         codeblockBuffer: batch.codeblockBuffer,
                         levelsPlan: plansForComp,
                         initialLL: nil)
-                } else if (useGPUHT || Self._gpuHTEntropyEnabled), metalSession != nil {
+                } else if metalSession != nil {
+                    // v10.25: multi-level fused whenever a session exists.
+                    // This branch was the production default from v6.2.0
+                    // until v10.3.0 flipped `_gpuHTEntropyEnabled` off (an
+                    // ENTROPY routing decision) and inadvertently dropped
+                    // the iDWT to the per-level path below — which reads
+                    // the LL back to CPU and re-uploads it at every
+                    // decomposition level. Gate the chaining on session
+                    // presence, not on the unrelated entropy flag.
                     // v7.1.0 H3: per-level OUTPUT canvas origin —
                     // determines parity for the inverse 5/3 lifting
                     // at each decomposition level. tcx0/tcy0 are the

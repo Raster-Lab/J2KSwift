@@ -94,7 +94,7 @@ swift test --filter J2KInteroperabilityTests
 ```
 
 ### 6. DICOM Integration Check
-- Verify `Sources/J2KCLI/DICOMSupport.swift` handles DICOM encapsulation
+- Verify `Sources/J2KCLICore/DICOMSupport.swift` handles DICOM encapsulation
 - Test with DICOM-wrapped JPEG 2000 data
 - Validate transfer syntax UIDs
 

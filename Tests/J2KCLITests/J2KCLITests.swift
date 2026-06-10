@@ -236,7 +236,38 @@ final class J2KCLITests: XCTestCase {
 
 /// A standalone argument parser that mirrors J2KCLI.parseArguments / normaliseKey
 /// but is accessible without importing the executable module.
+// MARK: - v10.25 pipe-sentinel parser regression tests
+
+final class CLIPipeSentinelParserTests: XCTestCase {
+    /// `-i -` / `-o -` must bind the bare dash as the option's value
+    /// (the stdin/stdout pipe sentinel) — the pre-v10.25 parser
+    /// treated it as a flag terminator, so `-i -` parsed as
+    /// `i = "true"` and the documented piping examples never worked.
+    func testPipeSentinelBindsAsOptionValue() {
+        let short = CLIArgumentParserTestHelper.parse(["-i", "-", "-o", "/tmp/x.j2k"])
+        XCTAssertEqual(short["i"], "-")
+        XCTAssertEqual(short["o"], "/tmp/x.j2k")
+
+        let long = CLIArgumentParserTestHelper.parse(["--input", "-", "--output", "-"])
+        XCTAssertEqual(long["input"], "-")
+        XCTAssertEqual(long["output"], "-")
+    }
+
+    /// Tokens that look like flags must still NOT be consumed as values.
+    func testFlagLikeTokensStillNotConsumed() {
+        let parsed = CLIArgumentParserTestHelper.parse(["-i", "--verbose"])
+        XCTAssertEqual(parsed["i"], "true")
+        XCTAssertEqual(parsed["verbose"], "true")
+    }
+}
+
 enum CLIArgumentParserTestHelper {
+    /// v10.25: mirrors `J2KCLI.isOptionValue` — a bare `-` is the
+    /// stdin/stdout pipe sentinel, not a flag.
+    static func isOptionValue(_ token: String) -> Bool {
+        token == "-" || !token.hasPrefix("-")
+    }
+
     static func parse(_ args: [String]) -> [String: String] {
         var result: [String: String] = [:]
         var i = 0
@@ -245,14 +276,14 @@ enum CLIArgumentParserTestHelper {
             if arg.hasPrefix("--") {
                 let raw = String(arg.dropFirst(2))
                 let key = normalise(raw)
-                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                if i + 1 < args.count && isOptionValue(args[i + 1]) {
                     result[key] = args[i + 1]; i += 2
                 } else {
                     result[key] = "true"; i += 1
                 }
             } else if arg.hasPrefix("-") && arg.count == 2 {
                 let key = String(arg.dropFirst())
-                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                if i + 1 < args.count && isOptionValue(args[i + 1]) {
                     result[key] = args[i + 1]; i += 2
                 } else {
                     result[key] = "true"; i += 1

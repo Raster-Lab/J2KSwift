@@ -7,7 +7,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
-@testable import J2KCLI
+@testable import J2KCLICore
 
 /// Tests for 3D volumetric encoding via the encode3d CLI command.
 final class Encode3DTests: XCTestCase {

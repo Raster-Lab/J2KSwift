@@ -512,14 +512,22 @@ public actor JP3DROIDecoder {
         var volumeComponents: [J2KVolumeComponent] = []
 
         for comp in 0..<siz.componentCount {
-            var rawData = Data(count: roiVoxels * bytesPerSample)
-            for i in 0..<roiVoxels {
-                let clamped = max(0, min(maxVal, roiBuffers[comp][i]))
-                let intVal = Int(roundf(clamped))
-                for b in 0..<bytesPerSample {
-                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+            // v10.25: contiguous [UInt8] serialization — see
+            // JP3DDecoder.assembleVolumeComponents (per-byte mutable
+            // Data subscripts pay a CoW check per access).
+            let buffer = roiBuffers[comp]
+            let byteCount = roiVoxels * bytesPerSample
+            let bytes = [UInt8](unsafeUninitializedCapacity: byteCount) { dst, n in
+                for i in 0..<roiVoxels {
+                    let clamped = max(0, min(maxVal, buffer[i]))
+                    let intVal = Int(roundf(clamped))
+                    for b in 0..<bytesPerSample {
+                        dst[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+                    }
                 }
+                n = byteCount
             }
+            let rawData = Data(bytes)
             volumeComponents.append(J2KVolumeComponent(
                 index: comp,
                 bitDepth: siz.bitDepth,

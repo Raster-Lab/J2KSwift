@@ -153,6 +153,17 @@ public actor J2KDaemonClient {
                         errMsg ?? "decode failed (no message)"))
                     return
                 }
+                // The wire format carries a single component (Phase 6.5).
+                // Returning component 0 of a multi-component image would
+                // silently lose data — throw so callers fall back to
+                // in-process decode until Phase 6.5b lands.
+                if compCount > 1 {
+                    cont.resume(throwing: J2KDaemonClientError.xpcInvocationError(
+                        "daemon decode returned \(compCount) components but the " +
+                        "wire format carries one; decode in-process for " +
+                        "multi-component images"))
+                    return
+                }
                 let component = J2KComponent(
                     index: 0,
                     bitDepth: Int(bd),

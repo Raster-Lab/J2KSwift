@@ -1225,6 +1225,15 @@ public struct J2KDecoder: Sendable {
         // nil and the decode behaves identically to `decode()`.
         let metadata = try DecoderPipeline.peekMetadata(data)
         let N = metadata.configuration.decompositionLevels
+
+        // v10.25 — multi-tile codestreams take the same truncated-
+        // iDWT path as single-tile: each tile's per-tile iDWT stops
+        // at the requested level (with parity origins anchored to
+        // the true canvas depth via `outputDepthOffset`) and
+        // `compositeTile` maps the reduced-dimension tile outputs
+        // into the reduced canvas with ceil-div offsets per
+        // ISO/IEC 15444-1. The earlier decode-then-downsample
+        // fallback (correct pixels, full-decode cost) is gone.
         if level >= 0 && level < N {
             let halvings = N - level
             let factor = 1 << halvings

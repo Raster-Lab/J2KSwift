@@ -22,6 +22,7 @@
 import Foundation
 import J2KDaemonProtocol
 import J2KDaemonCore
+import J2KCodec
 
 @main
 struct J2KDaemonMain {
@@ -29,6 +30,21 @@ struct J2KDaemonMain {
         // Force the start-time singleton to evaluate before main()
         // returns so the first ping has a sensible uptime.
         _ = J2KDaemonService.startTime
+
+        // v10.25: pre-warm the Metal session at startup instead of
+        // inside the first request. launchd spawns j2kd on demand, so
+        // without this every fresh spawn paid shader-library load +
+        // PSO compilation serially inside the first decode/encode
+        // request. Runs concurrently with listener setup; requests
+        // that arrive mid-warm just await the same idempotent warm.
+        Task.detached(priority: .high) {
+            // includeWarmupDispatch: at startup the synthetic warmup
+            // decodes (lossy 9/7 + lossless 5/3) are exactly what we
+            // want to pay here instead of inside the first request —
+            // they drive the Metal driver state init that PSO
+            // compilation alone doesn't cover.
+            await J2KDecoder.preWarm(includeWarmupDispatch: true)
+        }
 
         // Phase 6.6 lifecycle — idle-timeout (default 10 min;
         // override via J2KD_IDLE_TIMEOUT_SECONDS env var) +

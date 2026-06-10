@@ -1461,7 +1461,12 @@ public actor J2KMetalDWT {
         }
 
         try await ensureInitialized()
-        let queue = try await metalDevice.commandQueue()
+        // v10.25: fresh per-call queue. Multi-tile decode runs tiles
+        // concurrently; on the single shared queue their command
+        // buffers execute strictly in commit order, serialising the
+        // per-tile IDWTs. Mirrors the forward/encode-side fix
+        // ("per-call MTLCommandQueue unblocks GPU CB concurrency").
+        let queue = try await metalDevice.makeFreshCommandQueue()
         let device = queue.device
         let stride32 = MemoryLayout<Int32>.stride
 
@@ -1537,12 +1542,25 @@ public actor J2KMetalDWT {
                 }
             }
 
-            let colLowBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: width * llH * stride32)
-            inFlight.append(colLowBuffer)
-            let colHighBuffer = try await bufferPool.acquireBuffer(
-                device: device, size: max(width * halfHH, 1) * stride32)
-            inFlight.append(colHighBuffer)
+            // The fused H+V kernel never binds the column
+            // intermediates — skip acquiring ~2 image-sized buffers
+            // for levels it will handle.
+            let needsColumnBuffers = !Self.fusedKernelEligible(
+                originalWidth: width, originalHeight: height,
+                tileOriginX: subbands.tileOriginX,
+                tileOriginY: subbands.tileOriginY)
+            var colLowBuffer: (any MTLBuffer)? = nil
+            var colHighBuffer: (any MTLBuffer)? = nil
+            if needsColumnBuffers {
+                let low = try await bufferPool.acquireBuffer(
+                    device: device, size: width * llH * stride32)
+                inFlight.append(low)
+                colLowBuffer = low
+                let high = try await bufferPool.acquireBuffer(
+                    device: device, size: max(width * halfHH, 1) * stride32)
+                inFlight.append(high)
+                colHighBuffer = high
+            }
             let outputBuffer = try await bufferPool.acquireBuffer(
                 device: device, size: width * height * stride32)
             inFlight.append(outputBuffer)
@@ -4026,15 +4044,18 @@ public actor J2KMetalDWT {
 
     private func readFloatArray(from buffer: MTLBuffer, elementCount: Int) -> [Float] {
         guard elementCount > 0 else { return [] }
-        var result = [Float](repeating: 0, count: elementCount)
         let ptr = buffer.contents()
-        result.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: ptr,
-                count: elementCount * MemoryLayout<Float>.stride
-            ))
+        // Release-mode hazard: `Array.withUnsafeMutableBytes { copyBytes }`
+        // immediately after `await cb.completed()` deadlocks (see the
+        // readback note in J2KMetalHTCleanup and `readInt32Array`).
+        // memcpy into uninitialized capacity instead — also skips the
+        // redundant zero-fill.
+        return [Float](unsafeUninitializedCapacity: elementCount) { buf, count in
+            buf.baseAddress!.update(
+                from: ptr.assumingMemoryBound(to: Float.self),
+                count: elementCount)
+            count = elementCount
         }
-        return result
     }
 
     private func inverse2DGPU(
@@ -4169,7 +4190,11 @@ public actor J2KMetalDWT {
     ) async throws -> [Int32] {
         try await ensureInitialized()
 
-        let queue = try await metalDevice.commandQueue()
+        // v10.25: fresh per-call queue (concurrent multi-tile decode
+        // serialised on the shared queue) + heap-backed buffer pool
+        // instead of 7 raw `device.makeBuffer` allocations per call —
+        // this path runs once per decomposition level per decode.
+        let queue = try await metalDevice.makeFreshCommandQueue()
         let device = queue.device
 
         let width = subbands.originalWidth
@@ -4182,24 +4207,32 @@ public actor J2KMetalDWT {
         let llH = bands.llH
         let halfHH = bands.halfHH
 
-        func makeBuffer(size: Int) throws -> any MTLBuffer {
-            guard let buffer = device.makeBuffer(
-                length: max(size, 1),
-                options: .storageModeShared
-            ) else {
-                throw J2KError.internalError("Failed to allocate Metal buffer of \(size) bytes")
-            }
-            return buffer
-        }
-
+        // Inline acquire (no helper closure) to keep Swift 6 strict-
+        // concurrency happy with the captured mutable state — same
+        // shape as `inverse2DInt32MultiLevelFused`.
+        var inFlight: [any MTLBuffer] = []
         let stride32 = MemoryLayout<Int32>.stride
-        let llBuffer = try makeBuffer(size: subbands.ll.count * stride32)
-        let lhBuffer = try makeBuffer(size: max(subbands.lh.count, 1) * stride32)
-        let hlBuffer = try makeBuffer(size: max(subbands.hl.count, 1) * stride32)
-        let hhBuffer = try makeBuffer(size: max(subbands.hh.count, 1) * stride32)
-        let colLowBuffer = try makeBuffer(size: width * llH * stride32)
-        let colHighBuffer = try makeBuffer(size: max(width * halfHH, 1) * stride32)
-        let outputBuffer = try makeBuffer(size: width * height * stride32)
+        let llBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(subbands.ll.count * stride32, 1))
+        inFlight.append(llBuffer)
+        let lhBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(subbands.lh.count, 1) * stride32)
+        inFlight.append(lhBuffer)
+        let hlBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(subbands.hl.count, 1) * stride32)
+        inFlight.append(hlBuffer)
+        let hhBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(subbands.hh.count, 1) * stride32)
+        inFlight.append(hhBuffer)
+        let colLowBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(width * llH * stride32, 1))
+        inFlight.append(colLowBuffer)
+        let colHighBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(width * halfHH, 1) * stride32)
+        inFlight.append(colHighBuffer)
+        let outputBuffer = try await bufferPool.acquireBuffer(
+            device: device, size: max(width * height * stride32, 1))
+        inFlight.append(outputBuffer)
 
         subbands.ll.withUnsafeBytes { src in
             llBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
@@ -4248,7 +4281,14 @@ public actor J2KMetalDWT {
                 "Inverse 5/3 GPU dispatch failed: \(cb.error?.localizedDescription ?? "(no description)")")
         }
 
-        return readInt32Array(from: outputBuffer, elementCount: width * height)
+        let result = readInt32Array(from: outputBuffer, elementCount: width * height)
+
+        // cb completed — buffers can go back to the pool.
+        let pool = bufferPool
+        let toReturn = inFlight
+        Task { for b in toReturn { await pool.returnBuffer(b) } }
+
+        return result
     }
 
     /// Encode the bit-exact reversible 5/3 inverse 2D transform
@@ -4359,6 +4399,22 @@ public actor J2KMetalDWT {
     /// force the fused path on smaller fixtures for A/B work.
     nonisolated(unsafe) public static var inverse53IntFusedPixelThreshold: Int = 12_000_000
 
+    /// Whether `encodeInverse2DInt32` will route a level of the given
+    /// geometry to the single-kernel fused H+V path — which does not
+    /// bind the column buffers, so callers may skip acquiring them.
+    /// Single source of truth for the fused-routing predicate.
+    public nonisolated static func fusedKernelEligible(
+        originalWidth: Int, originalHeight: Int,
+        tileOriginX: Int, tileOriginY: Int
+    ) -> Bool {
+        Self.inverse53IntFusedEnabled
+            && (tileOriginX & 1) == 0 && (tileOriginY & 1) == 0
+            && originalWidth * originalHeight >= Self.inverse53IntFusedPixelThreshold
+    }
+
+    /// Public surface — signature unchanged since v5.7.0 (SemVer:
+    /// J2KMetal is an exported library product). Forwards to the
+    /// internal optional-column-buffer variant below.
     public func encodeInverse2DInt32(
         into cb: any MTLCommandBuffer,
         ll: any MTLBuffer,
@@ -4367,6 +4423,33 @@ public actor J2KMetalDWT {
         hh: any MTLBuffer,
         colLow: any MTLBuffer,
         colHigh: any MTLBuffer,
+        output: any MTLBuffer,
+        originalWidth: Int,
+        originalHeight: Int,
+        llHeight: Int,
+        tileOriginX: Int = 0,
+        tileOriginY: Int = 0
+    ) async throws {
+        try await encodeInverse2DInt32(
+            into: cb, ll: ll, lh: lh, hl: hl, hh: hh,
+            colLow: Optional(colLow), colHigh: Optional(colHigh),
+            output: output,
+            originalWidth: originalWidth, originalHeight: originalHeight,
+            llHeight: llHeight,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+    }
+
+    /// v10.25 internal variant: `colLow`/`colHigh` may be nil when the
+    /// caller has pre-checked `fusedKernelEligible` (the fused H+V
+    /// kernel never binds them).
+    func encodeInverse2DInt32(
+        into cb: any MTLCommandBuffer,
+        ll: any MTLBuffer,
+        lh: any MTLBuffer,
+        hl: any MTLBuffer,
+        hh: any MTLBuffer,
+        colLow: (any MTLBuffer)?,
+        colHigh: (any MTLBuffer)?,
         output: any MTLBuffer,
         originalWidth: Int,
         originalHeight: Int,
@@ -4393,10 +4476,9 @@ public actor J2KMetalDWT {
         // — the boundary the variance bench established for the
         // fused-vs-tiled crossover; below threshold, the tiled pair
         // is at least as fast).
-        let levelPixelCount = originalWidth * originalHeight
-        let useFused = Self.inverse53IntFusedEnabled
-            && !hOddOrigin && !vOddOrigin
-            && levelPixelCount >= Self.inverse53IntFusedPixelThreshold
+        let useFused = Self.fusedKernelEligible(
+            originalWidth: originalWidth, originalHeight: originalHeight,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY)
         if useFused {
             try await encodeInverse2DInt32_Fused(
                 into: cb,
@@ -4406,6 +4488,16 @@ public actor J2KMetalDWT {
                 originalHeight: originalHeight,
                 llHeight: llHeight, halfHH: halfHH)
             return
+        }
+
+        // All non-fused paths need the column intermediates. Callers
+        // may legitimately pass nil only when `fusedKernelEligible`
+        // says the fused path will run — reaching here with nil means
+        // the predicates drifted; fail loudly rather than corrupt.
+        guard let colLow, let colHigh else {
+            throw J2KError.internalError(
+                "encodeInverse2DInt32: column buffers are nil but the " +
+                "fused kernel was not selected (predicate drift)")
         }
 
         // v10.3 Phase 2-2-tiled: threadgroup-memory tiled kernels.

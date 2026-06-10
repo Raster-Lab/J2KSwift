@@ -11,7 +11,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
-@testable import J2KCLI
+@testable import J2KCLICore
 @testable import J2KCodec
 
 final class J2KHTConformantMedicalRoundTripTests: XCTestCase {

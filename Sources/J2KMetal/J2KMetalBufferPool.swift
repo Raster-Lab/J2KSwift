@@ -373,6 +373,20 @@ public actor J2KMetalBufferPool {
         let minBucket = 4096
         guard size > minBucket else { return minBucket }
 
+        // v10.25: power-of-2 rounding is pathological for the ≥12 MP
+        // medical class — a 67 MB MG-large level buffer rounds to
+        // 128 MB, nearly doubling heap pressure and filling the
+        // 256 MB pool budget with just two buffers (every further
+        // `returnBuffer` is dropped, so the next decode re-allocates).
+        // Above 16 MB, round up to 16 MB granularity instead: the
+        // same MG buffer buckets at 80 MB and three of them fit the
+        // pool. `buffer.length` equals the allocated bucket size, so
+        // acquire/return keys stay consistent.
+        let linearThreshold = 16 * 1024 * 1024
+        if size > linearThreshold {
+            return ((size + linearThreshold - 1) / linearThreshold) * linearThreshold
+        }
+
         var bucket = minBucket
         while bucket < size {
             bucket *= 2

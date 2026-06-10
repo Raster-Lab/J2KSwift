@@ -3,7 +3,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
-@testable import J2KCLI
+@testable import J2KCLICore
 
 /// Real-data lossless stress tests driven by the staged local DICOM corpus.
 ///

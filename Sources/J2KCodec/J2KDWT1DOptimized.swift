@@ -1012,15 +1012,31 @@ public struct J2KDWT2DOptimizer: Sendable {
     /// `subbands` must be ordered DEEPEST-FIRST (matching the
     /// no-origin overload's input contract). The deepest LL is
     /// passed separately as `ll`/`llW`/`llH`.
+    ///
+    /// `outputDepthOffset` (v10.25 multi-tile partial-resolution) —
+    /// the decomposition depth of the FINAL output LL. For a full
+    /// reconstruction this is 0 (output is the level-0 image) and
+    /// each iteration's parity origin is `ceil(tcx0 / 2^(totalLevels
+    /// - k - 1))` as before. When the caller truncates the chain
+    /// (partial-resolution decode passes only the deepest
+    /// `effectiveLevels` subband entries), the output LL sits at
+    /// depth `N - effectiveLevels`, and every intermediate level is
+    /// deeper by that same offset — without it the parity origins
+    /// would be computed as if the truncated chain reached level 0,
+    /// producing wrong interleave parity for non-aligned tile
+    /// origins (the v10.25 multi-tile `decodeResolution` corruption).
     public func inverseTransformMultiLevel53(
         ll: [Int32], llW: Int, llH: Int,
         subbands: [(lh: [Int32], lhW: Int, lhH: Int,
                      hl: [Int32], hlW: Int, hlH: Int,
                      hh: [Int32], hhW: Int, hhH: Int)],
         tileOriginX tcx0: Int,
-        tileOriginY tcy0: Int
+        tileOriginY tcy0: Int,
+        outputDepthOffset: Int = 0
     ) async throws -> (data: [Int32], width: Int, height: Int) {
         // Origin (0, 0) → existing fast path. Byte-identical output.
+        // (Parity origins are all zero at every depth, so the depth
+        // offset is irrelevant on this path.)
         if tcx0 == 0 && tcy0 == 0 {
             let r = await inverseTransformMultiLevel53(
                 ll: ll, llW: llW, llH: llH, subbands: subbands)
@@ -1054,10 +1070,11 @@ public struct J2KDWT2DOptimizer: Sendable {
         var currentLL: [[Int32]] = flatToJagged(ll, w: llW, h: llH)
 
         // Iterate deepest first. At iteration k we invert
-        // decomposition level (totalLevels - k); the produced LL
-        // sits at canvas coordinates ceil(tcx0 / 2^(totalLevels - k - 1)).
+        // decomposition level (totalLevels - k + outputDepthOffset);
+        // the produced LL sits at canvas coordinates
+        // ceil(tcx0 / 2^(totalLevels - k - 1 + outputDepthOffset)).
         for (k, level) in subbands.enumerated() {
-            let outputDepth = totalLevels - k - 1
+            let outputDepth = totalLevels - k - 1 + outputDepthOffset
             let denom = 1 << outputDepth
             let curUX = Self.ceilDivIntegerOrigin(tcx0, denom)
             let curUY = Self.ceilDivIntegerOrigin(tcy0, denom)

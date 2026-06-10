@@ -602,17 +602,21 @@ extension J2KDecoder {
 
     /// Decodes a JPEG 2000 image at a specific resolution level.
     ///
-    /// **v10.5.0 — Phase 2 Stage B.1 (entropy filter)**: skips entropy
-    /// decode for code-blocks at higher decomposition levels than
-    /// needed for the target resolution. Saves the dominant entropy
-    /// decode stage on partial-resolution requests. iDWT still runs
-    /// all levels (with zeros for filtered detail bands) and the
-    /// output is then downsampled to the target dimensions.
+    /// **v10.5.0 — true partial-resolution decode**: Stage B.1 skips
+    /// entropy decode for code-blocks at higher decomposition levels
+    /// than needed for the target resolution (the dominant stage);
+    /// Stage B.2 truncates the inverse DWT at the target level so the
+    /// pipeline outputs reduced-dimension data directly — no
+    /// downsample step. Phase 1 (v10.4.0) was decode-then-downsample
+    /// only.
     ///
-    /// Phase 1 (v10.4.0) was decode-then-downsample only. Stage B.1
-    /// adds the entropy-skip win. **Stage B.2 (future)** will also
-    /// truncate the inverse DWT and remove the downsample step,
-    /// completing the projected ~13× thumbnail speedup.
+    /// **v10.25 — multi-tile support**: each tile's truncated iDWT
+    /// output is composited into the reduced canvas at ceil-div
+    /// offsets per ISO/IEC 15444-1, so multi-tile codestreams (the
+    /// production `.auto` encode shape for ≥3 MP images) get the same
+    /// true partial-resolution speedup as single-tile. (v10.5.0
+    /// through v10.24 mis-composited multi-tile partial decodes;
+    /// v10.25.0 interim builds fell back to decode-then-downsample.)
     ///
     /// - Parameters:
     ///   - data: The JPEG 2000 data to decode.
@@ -648,7 +652,11 @@ extension J2KDecoder {
 
     /// Power-of-2 downscale via block-average (separable). Handles both
     /// 8-bit and 16-bit components.
-    private static func downscaleByPowerOf2(
+    // internal (not private): no production callers since the v10.25
+    // multi-tile partial-resolution fallback was removed, but kept as
+    // the reference block-mean downsample for the decodeResolution
+    // content-correlation tests (V10_10_DecodeResolutionSmokeTests).
+    static func downscaleByPowerOf2(
         image: J2KImage, targetWidth: Int, targetHeight: Int, factor: Int
     ) throws -> J2KImage {
         guard factor >= 1 else {

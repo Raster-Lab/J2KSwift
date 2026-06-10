@@ -27,7 +27,7 @@ extension J2KCLI {
             if arg.hasPrefix("--") {
                 let raw = String(arg.dropFirst(2))
                 let key = Self.normaliseKey(raw)
-                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                if i + 1 < args.count && Self.isOptionValue(args[i + 1]) {
                     result[key] = args[i + 1]
                     i += 2
                 } else {
@@ -36,7 +36,7 @@ extension J2KCLI {
                 }
             } else if arg.hasPrefix("-") && arg.count == 2 {
                 let key = String(arg.dropFirst())
-                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                if i + 1 < args.count && Self.isOptionValue(args[i + 1]) {
                     result[key] = args[i + 1]
                     i += 2
                 } else {
@@ -51,6 +51,12 @@ extension J2KCLI {
         }
 
         return result
+    }
+
+    /// A token is a value for the preceding option unless it looks like a flag.
+    /// A bare `-` is the stdin/stdout pipe sentinel (`-i -`, `-o -`), not a flag.
+    static func isOptionValue(_ token: String) -> Bool {
+        token == "-" || !token.hasPrefix("-")
     }
 
     /// Normalise a flag key so that British and American spellings map to the same key.
@@ -444,13 +450,33 @@ extension J2KCLI {
         let verbose    = options["verbose"] != nil
         let quiet      = options["quiet"] != nil
 
-        // Partial-decoding options (informational – passed to decoder when supported)
+        // Partial-decoding options — wired to the v10.4–v10.7 partial-decode
+        // APIs: `--level` → decodeResolution (entropy-skip + truncated iDWT,
+        // 3-8× thumbnail speedup), `--region` → decodeRegion(.direct)
+        // (code-block footprint filter + tile-granular skip).
         let resolutionLevel = options["level"].flatMap { Int($0) }
         let qualityLayer    = options["layer"].flatMap { Int($0) }
+        let region: J2KRegion?
+        if let regionStr = options["region"] {
+            guard let parsed = parseRegion(regionStr) else {
+                print("Error: --region expects x,y,width,height (e.g. --region 0,0,512,512)")
+                exit(1)
+            }
+            region = parsed
+        } else {
+            region = nil
+        }
+        let componentFilter: [Int]? = {
+            if let single = options["component"].flatMap({ Int($0) }) { return [single] }
+            if let list = options["components"] {
+                let parsed = list.split(separator: ",").compactMap { Int($0) }
+                return parsed.isEmpty ? nil : parsed
+            }
+            return nil
+        }()
         let headerOnly      = options["header-only"] != nil
         let stripAlpha      = options["strip-alpha"] != nil
         let scale           = options["scale"].flatMap { Int($0) }
-        let regionStr       = options["region"]
         let outputFormat    = options["output-format"]
         let bitDepthConvert = options["bit-depth"].flatMap { Int($0) }
         // Opt-in GPU HTJ2K entropy decode (M2-prime, v5.5.0+). When the
@@ -477,14 +503,20 @@ extension J2KCLI {
         let forceCPU = options["no-gpu"] != nil || !explicitGPU
         if forceCPU {
             setenv("J2K_GPU_INVERSE_53", "0", 1)
-            setenv("J2K_GPU_HT_ENTROPY", "0", 1)
+            // Note: GPU HT entropy decode defaults OFF since v10.3.0, so no
+            // env override is needed here (the previously-set
+            // `J2K_GPU_HT_ENTROPY` was a dead variable — the pipeline reads
+            // `J2K_GPU_HT_ENTROPY_DECODE`).
         }
-        _ = (stripAlpha, scale, regionStr, outputFormat, bitDepthConvert)
+        _ = (stripAlpha, scale, outputFormat, bitDepthConvert)
 
         if verbose {
             printInfo("Loading: \(inputPath)", pipeMode: pipeOutput)
             if let l = resolutionLevel { printInfo("  Resolution level: \(l)", pipeMode: pipeOutput) }
             if let l = qualityLayer    { printInfo("  Quality layer: \(l)", pipeMode: pipeOutput) }
+            if let r = region {
+                printInfo("  Region: \(r.x),\(r.y) \(r.width)×\(r.height)", pipeMode: pipeOutput)
+            }
         }
 
         // Load encoded data
@@ -547,9 +579,12 @@ extension J2KCLI {
         } else {
             useDaemon = false
         }
+        // Partial decode (--level / --region) is in-process only — the daemon
+        // protocol has no partial-decode RPC.
+        let partialRequested = (resolutionLevel != nil) || (region != nil)
         var usedDaemon = false
         #if os(macOS)
-        if useDaemon && !noDaemonExplicit && !useGPUHT && !pipeInput {
+        if useDaemon && !noDaemonExplicit && !useGPUHT && !pipeInput && !partialRequested {
             let client = J2KDaemonClient()
             do {
                 decodedImage = try await client.decode(encodedData)
@@ -557,22 +592,23 @@ extension J2KCLI {
                 await client.close()
             } catch {
                 if verbose {
-                    printInfo("(daemon unavailable, decoding in-process)", pipeMode: pipeOutput)
+                    printInfo("(daemon decode unavailable for this request — " +
+                              "decoding in-process: \(error))", pipeMode: pipeOutput)
                 }
                 await client.close()
-                decodedImage = try await decoder.decode(encodedData)
+                decodedImage = try await decodeInProcess(
+                    decoder, data: encodedData, level: resolutionLevel, region: region,
+                    layer: qualityLayer, components: componentFilter, useGPUHT: useGPUHT)
             }
-        } else if useGPUHT {
-            decodedImage = try await decoder.decodeWithGPUHT(encodedData)
         } else {
-            decodedImage = try await decoder.decode(encodedData)
+            decodedImage = try await decodeInProcess(
+                decoder, data: encodedData, level: resolutionLevel, region: region,
+                layer: qualityLayer, components: componentFilter, useGPUHT: useGPUHT)
         }
         #else
-        if useGPUHT {
-            decodedImage = try await decoder.decodeWithGPUHT(encodedData)
-        } else {
-            decodedImage = try await decoder.decode(encodedData)
-        }
+        decodedImage = try await decodeInProcess(
+            decoder, data: encodedData, level: resolutionLevel, region: region,
+            layer: qualityLayer, components: componentFilter, useGPUHT: useGPUHT)
         #endif
         let decodeTime = Date().timeIntervalSince(startDecode)
         if verbose && usedDaemon {
@@ -650,6 +686,41 @@ extension J2KCLI {
         }
     }
 
+    /// Parse `--region x,y,width,height` into a ``J2KRegion``.
+    static func parseRegion(_ s: String) -> J2KRegion? {
+        let parts = s.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4,
+              parts[0] >= 0, parts[1] >= 0, parts[2] > 0, parts[3] > 0 else { return nil }
+        return J2KRegion(x: parts[0], y: parts[1], width: parts[2], height: parts[3])
+    }
+
+    /// In-process decode honouring the partial-decode options.
+    ///
+    /// `--region` takes precedence over `--level` (matching the API surface —
+    /// the two cannot be combined in one call today).
+    static func decodeInProcess(
+        _ decoder: J2KDecoder,
+        data: Data,
+        level: Int?,
+        region: J2KRegion?,
+        layer: Int?,
+        components: [Int]?,
+        useGPUHT: Bool
+    ) async throws -> J2KImage {
+        if let region {
+            return try await decoder.decodeRegion(data, options: J2KROIDecodingOptions(
+                region: region, maxLayer: layer, components: components, strategy: .direct))
+        }
+        if let level {
+            return try await decoder.decodeResolution(data, options: J2KResolutionDecodingOptions(
+                level: level, maxLayer: layer, components: components, upscale: false))
+        }
+        if useGPUHT {
+            return try await decoder.decodeWithGPUHT(data)
+        }
+        return try await decoder.decode(data)
+    }
+
     private static func printDecodeHelp() {
         print("""
         j2k decode - Decode a JPEG 2000 image
@@ -661,10 +732,19 @@ extension J2KCLI {
             -i, --input PATH            Input file (.j2k, .jp2, .jpx)
             -o, --output PATH           Output image (optional; derived from input if omitted)
             --output-format FORMAT      Output format: pgm, ppm, tiff, png
-            --level N                   Resolution level (0 = full)
-            --layer N                   Quality layer
-            --component N               Single component index
-            --components N,M,...        Component indices
+            --level N                   Decode at resolution level N (0 = smallest
+                                        thumbnail, higher = more detail; omit for
+                                        full resolution). 3-8× faster for thumbnails.
+                                        Values above the codestream's level count
+                                        decode full resolution. NOTE: semantics
+                                        changed in v10.25 — previously ignored.
+            --region X,Y,W,H            Decode only the given region (true ROI
+                                        decode — skips entropy work outside it).
+                                        Takes precedence over --level.
+            --layer N                   Quality layer (currently informational for
+                                        --level/--region decodes)
+            --component N               Single component index (informational)
+            --components N,M,...        Component indices (informational)
             --colour-space              Convert colour space
             --gpu / --no-gpu            GPU acceleration
             --gpu-ht                    GPU HTJ2K entropy decode (Metal; HT cleanup-only)

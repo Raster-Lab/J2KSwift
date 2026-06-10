@@ -7,7 +7,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
-@testable import J2KCLI
+@testable import J2KCLICore
 
 /// Tests for the compare command: PSNR, MSE, MAE, MaxError, bit-exact comparison.
 final class CompareCommandTests: XCTestCase {

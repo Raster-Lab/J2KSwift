@@ -41,6 +41,11 @@ public enum J2KGPUForward53Telemetry {
         /// `width * height < _gpuForward53PixelThreshold` (4 MP
         /// production default).
         case belowThreshold     = "below-threshold"
+        /// v10.25: multi-tile per-tile dispatch excluded —
+        /// `isMultiTilePerTile` and the tile is below
+        /// `_gpuForward53MultiTilePerTilePixelThreshold` while
+        /// above the single-tile threshold.
+        case multiTilePerTile   = "multi-tile-per-tile"
     }
 
     public struct Snapshot: Sendable {

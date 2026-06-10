@@ -434,16 +434,26 @@ public actor JP3DDecoder {
         var volumeComponents: [J2KVolumeComponent] = []
 
         for comp in 0..<siz.componentCount {
-            var rawData = Data(count: voxelCount * bytesPerSample)
             let maxVal = Float((1 << siz.bitDepth) - 1)
 
-            for i in 0..<voxelCount {
-                let clamped = max(0, min(maxVal, componentBuffers[comp][i]))
-                let intVal = Int(roundf(clamped))
-                for b in 0..<bytesPerSample {
-                    rawData[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+            // v10.25: serialize via a contiguous [UInt8] instead of
+            // per-byte mutable `Data` subscript writes — each of those
+            // paid a CoW/representation check (~67M for a 33M-voxel
+            // 16-bit volume). Byte order (little-endian sample
+            // serialization) is unchanged.
+            let buffer = componentBuffers[comp]
+            let byteCount = voxelCount * bytesPerSample
+            let bytes = [UInt8](unsafeUninitializedCapacity: byteCount) { dst, n in
+                for i in 0..<voxelCount {
+                    let clamped = max(0, min(maxVal, buffer[i]))
+                    let intVal = Int(roundf(clamped))
+                    for b in 0..<bytesPerSample {
+                        dst[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: intVal >> (b * 8))
+                    }
                 }
+                n = byteCount
             }
+            let rawData = Data(bytes)
 
             volumeComponents.append(J2KVolumeComponent(
                 index: comp,
@@ -516,15 +526,27 @@ public actor JP3DDecoder {
         tileOrigin: (x: Int, y: Int, z: Int),
         outWidth: Int, outHeight: Int
     ) {
+        // v10.25: row-wise bulk copies instead of a per-voxel triple
+        // loop with two bounds checks per element. Rows are contiguous
+        // in both layouts; the per-row clamp preserves the original
+        // per-voxel guard semantics exactly (it only ever truncated at
+        // the end of a row when source/destination were undersized).
         let outSlice = outWidth * outHeight
         let voxelCount = destination.count
-        for z in 0..<tileDims.d {
-            for y in 0..<tileDims.h {
-                for x in 0..<tileDims.w {
-                    let srcIdx = z * tileDims.w * tileDims.h + y * tileDims.w + x
-                    let dstIdx = (tileOrigin.z + z) * outSlice + (tileOrigin.y + y) * outWidth + (tileOrigin.x + x)
-                    if srcIdx < source.count && dstIdx < voxelCount {
-                        destination[dstIdx] = source[srcIdx]
+        let tileSlice = tileDims.w * tileDims.h
+        destination.withUnsafeMutableBufferPointer { dst in
+            source.withUnsafeBufferPointer { src in
+                for z in 0..<tileDims.d {
+                    for y in 0..<tileDims.h {
+                        let srcRow = z * tileSlice + y * tileDims.w
+                        let dstRow = (tileOrigin.z + z) * outSlice
+                            + (tileOrigin.y + y) * outWidth + tileOrigin.x
+                        let n = min(tileDims.w,
+                                    max(0, src.count - srcRow),
+                                    max(0, voxelCount - dstRow))
+                        guard n > 0, srcRow >= 0, dstRow >= 0 else { continue }
+                        dst.baseAddress!.advanced(by: dstRow).update(
+                            from: src.baseAddress!.advanced(by: srcRow), count: n)
                     }
                 }
             }

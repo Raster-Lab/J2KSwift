@@ -7,7 +7,7 @@
 import XCTest
 import Foundation
 @testable import J2KCore
-@testable import J2KCLI
+@testable import J2KCLICore
 
 /// Tests for the convert command: format conversion with bit depth conversion.
 final class ConvertCommandTests: XCTestCase {

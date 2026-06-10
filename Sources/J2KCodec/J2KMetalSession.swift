@@ -139,11 +139,21 @@ public struct J2KMetalSession: Sendable {
             .dwtInverse97Horizontal,
             .dwtInverse97Vertical,
             .subbandScatter,
-            .dwtInverse53HorizontalInt,
+            .dwtInverse53HorizontalInt,     // odd-origin fallback path
             .dwtInverse53VerticalInt,
             .dwtInverse53Horizontal,
             .dwtInverse53Vertical,
             .dequantize,
+            // v10.25: the kernels production lossless decode actually
+            // uses — tiled is default-on since v10.1.0, fused since
+            // v10.3.0 (≥12 MP), batched serves the multi-tile path.
+            // These previously compiled lazily on the first real
+            // decode, defeating preWarm for the dominant 5/3 path.
+            .dwtInverse53HorizontalIntTiled,
+            .dwtInverse53VerticalIntTiled,
+            .dwtInverse53HorizontalIntTiledBatched,
+            .dwtInverse53VerticalIntTiledBatched,
+            .dwtInverse53FusedIntTiled,
         ]
 
         let lib = self.shaderLibrary
@@ -185,6 +195,22 @@ public struct J2KMetalSession: Sendable {
         cfg.bitrateMode = .constantBitrate(bitsPerPixel: 2.0)
         let encoded = try await J2KEncoder(encodingConfiguration: cfg).encode(warmupImage)
         _ = try await J2KDecoder().decodeWithGPUHT(encoded, session: self)
+
+        // v10.25: also run a LOSSLESS reversible 5/3 warmup — the
+        // production decode shape for the medical corpus. The lossy
+        // warmup above exercises the 9/7 Float kernels only; this one
+        // drives the Int32 5/3 multi-level path (tiled kernels,
+        // subband scatter, Int32 readback) so the first real medical
+        // decode doesn't pay that driver state init.
+        var losslessCfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: true,
+            useReversibleFilter: true,
+            htj2kBlockFormat: .conformant)
+        losslessCfg.bitrateMode = .lossless
+        let losslessEncoded = try await J2KEncoder(encodingConfiguration: losslessCfg).encode(warmupImage)
+        _ = try await J2KDecoder().decodeWithGPUHT(losslessEncoded, session: self)
         #endif
     }
 

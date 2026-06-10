@@ -680,19 +680,9 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
-        var c0 = [Float](repeating: 0, count: count)
-        var c1 = [Float](repeating: 0, count: count)
-        var c2 = [Float](repeating: 0, count: count)
-
-        c0.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: c0Buffer.contents(), count: bufferSize))
-        }
-        c1.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: c1Buffer.contents(), count: bufferSize))
-        }
-        c2.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: c2Buffer.contents(), count: bufferSize))
-        }
+        let c0 = readFloatsFromSharedBuffer(c0Buffer, count: count)
+        let c1 = readFloatsFromSharedBuffer(c1Buffer, count: count)
+        let c2 = readFloatsFromSharedBuffer(c2Buffer, count: count)
 
         // Buffers released via ARC when they go out of scope
 
@@ -774,19 +764,9 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
-        var r = [Float](repeating: 0, count: count)
-        var g = [Float](repeating: 0, count: count)
-        var b = [Float](repeating: 0, count: count)
-
-        r.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: rBuffer.contents(), count: bufferSize))
-        }
-        g.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: gBuffer.contents(), count: bufferSize))
-        }
-        b.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: bBuffer.contents(), count: bufferSize))
-        }
+        let r = readFloatsFromSharedBuffer(rBuffer, count: count)
+        let g = readFloatsFromSharedBuffer(gBuffer, count: count)
+        let b = readFloatsFromSharedBuffer(bBuffer, count: count)
 
         // Buffers released via ARC when they go out of scope
 
@@ -919,10 +899,7 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
-        var result = [Float](repeating: 0, count: count)
-        result.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(start: outputBuffer.contents(), count: bufferSize))
-        }
+        let result = readFloatsFromSharedBuffer(outputBuffer, count: count)
 
         // Buffers released via ARC when they go out of scope
 
@@ -957,3 +934,22 @@ public actor J2KMetalColorTransform {
         ProcessInfo.processInfo.systemUptime
     }
 }
+
+#if canImport(Metal)
+/// Read `count` Floats out of a shared-storage `MTLBuffer`.
+///
+/// Uses `unsafeUninitializedCapacity` + pointer `update` instead of
+/// `Array.withUnsafeMutableBytes { copyBytes }` — the latter deadlocks
+/// in release builds when invoked immediately after
+/// `await commandBuffer.completed()` (see the readback note in
+/// J2KMetalHTCleanup). Also skips the redundant zero-fill.
+private func readFloatsFromSharedBuffer(_ buffer: any MTLBuffer, count: Int) -> [Float] {
+    guard count > 0 else { return [] }
+    let ptr = buffer.contents()
+    return [Float](unsafeUninitializedCapacity: count) { buf, initialized in
+        buf.baseAddress!.update(
+            from: ptr.assumingMemoryBound(to: Float.self), count: count)
+        initialized = count
+    }
+}
+#endif
