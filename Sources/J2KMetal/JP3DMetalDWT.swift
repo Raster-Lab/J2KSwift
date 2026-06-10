@@ -1166,14 +1166,16 @@ kernel void jp3d_separable_dwt_forward(
     }
 
     private func readBuffer(_ buf: MTLBuffer, count: Int) -> [Float] {
-        var result = [Float](repeating: 0, count: count)
-        result.withUnsafeMutableBytes { dst in
-            dst.copyBytes(from: UnsafeRawBufferPointer(
-                start: buf.contents(),
-                count: count * MemoryLayout<Float>.stride
-            ))
+        guard count > 0 else { return [] }
+        // `withUnsafeMutableBytes { copyBytes }` after `await
+        // cb.completed()` deadlocks in release builds (see the
+        // readback note in J2KMetalHTCleanup).
+        let ptr = buf.contents()
+        return [Float](unsafeUninitializedCapacity: count) { dst, initialized in
+            dst.baseAddress!.update(
+                from: ptr.assumingMemoryBound(to: Float.self), count: count)
+            initialized = count
         }
-        return result
     }
 }
 #endif  // canImport(Metal)

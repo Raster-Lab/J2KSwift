@@ -598,9 +598,6 @@ struct JP3DSliceStackCodec: Sendable {
         for z in zStart..<zUpper {
             let entry = sliceEntries[z]
             let sliceFlags = entry.flags
-            let codestream = payload.subdata(
-                in: entry.codestreamStart..<(entry.codestreamStart.advanced(by: entry.length))
-            )
 
             // v10.18 — route through decodeResolution / decodeRegion
             // as appropriate. v10.20-Phase-3c moved the (K=0, no ROI)
@@ -611,45 +608,55 @@ struct JP3DSliceStackCodec: Sendable {
             // The per-slice branches below remain as the off-switch
             // fallback only — they execute when
             // `J2K_JP3D_BATCHED_BRIDGE=0`.
+            //
+            // v10.25: the per-slice `payload.subdata` copy moved into
+            // the fallback branches — the default batched path was
+            // paying a second whole-payload copy it never read (the
+            // batched task group above makes its own subdata copies).
             let image: J2KImage
             if let batched = batchedImages {
                 image = batched[z - zStart]
-            } else if let roi = regionOfInterest, K > 0 {
-                // v10.22 — env-var off-switch case for K>0 + ROI.
-                // Route per-slice through decodePartial, which composes
-                // partial-res + ROI at the 2D codec level (v10.8).
-                if perSliceDecompLevels == nil {
-                    perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
-                }
-                let N = perSliceDecompLevels ?? 0
-                let sliceLevel = max(0, N - K)
-                let opts = J2KPartialDecodingOptions(
-                    maxResolutionLevel: sliceLevel,
-                    region: J2KRegion(
-                        x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
-                        width: roi.xRange.count, height: roi.yRange.count))
-                image = try await decoder.decodePartial(codestream, options: opts)
-            } else if let roi = regionOfInterest {
-                let opts = J2KROIDecodingOptions(
-                    region: J2KRegion(
-                        x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
-                        width: roi.xRange.count, height: roi.yRange.count),
-                    strategy: .direct)
-                image = try await decoder.decodeRegion(codestream, options: opts)
-            } else if K == 0 {
-                // Unreachable when useBatchedBridge is true; kept as a
-                // safe fallback in case the batched path ever throws
-                // before producing all images.
-                image = try await decoder.decode(codestream)
             } else {
-                if perSliceDecompLevels == nil {
-                    perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
+                let codestream = payload.subdata(
+                    in: entry.codestreamStart..<(entry.codestreamStart.advanced(by: entry.length))
+                )
+                if let roi = regionOfInterest, K > 0 {
+                    // v10.22 — env-var off-switch case for K>0 + ROI.
+                    // Route per-slice through decodePartial, which composes
+                    // partial-res + ROI at the 2D codec level (v10.8).
+                    if perSliceDecompLevels == nil {
+                        perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
+                    }
+                    let N = perSliceDecompLevels ?? 0
+                    let sliceLevel = max(0, N - K)
+                    let opts = J2KPartialDecodingOptions(
+                        maxResolutionLevel: sliceLevel,
+                        region: J2KRegion(
+                            x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
+                            width: roi.xRange.count, height: roi.yRange.count))
+                    image = try await decoder.decodePartial(codestream, options: opts)
+                } else if let roi = regionOfInterest {
+                    let opts = J2KROIDecodingOptions(
+                        region: J2KRegion(
+                            x: roi.xRange.lowerBound, y: roi.yRange.lowerBound,
+                            width: roi.xRange.count, height: roi.yRange.count),
+                        strategy: .direct)
+                    image = try await decoder.decodeRegion(codestream, options: opts)
+                } else if K == 0 {
+                    // Unreachable when useBatchedBridge is true; kept as a
+                    // safe fallback in case the batched path ever throws
+                    // before producing all images.
+                    image = try await decoder.decode(codestream)
+                } else {
+                    if perSliceDecompLevels == nil {
+                        perSliceDecompLevels = Self.peekDecompositionLevels(codestream)
+                    }
+                    let N = perSliceDecompLevels ?? 0
+                    let sliceLevel = max(0, N - K)
+                    let opts = J2KResolutionDecodingOptions(
+                        level: sliceLevel, upscale: false)
+                    image = try await decoder.decodeResolution(codestream, options: opts)
                 }
-                let N = perSliceDecompLevels ?? 0
-                let sliceLevel = max(0, N - K)
-                let opts = J2KResolutionDecodingOptions(
-                    level: sliceLevel, upscale: false)
-                image = try await decoder.decodeResolution(codestream, options: opts)
             }
             _ = regionXLower; _ = regionYLower  // currently unused; placement is region-local
             let isResidual = (sliceFlags & Self.sliceFlagIsResidual) != 0
@@ -1199,24 +1206,49 @@ struct JP3DSliceStackCodec: Sendable {
                 )
             }
             let data = comp.data
-            var slice = [Int32](repeating: 0, count: voxelsPerSlice)
-
-            if bytesPerSample == 1 {
-                for i in 0..<voxelsPerSlice {
-                    let byte = data[data.startIndex + i]
-                    slice[i] = signed
-                        ? Int32(Int8(bitPattern: byte))
-                        : Int32(byte)
-                }
-            } else {
-                // J2KDecoder writes 16-bit samples as big-endian.
-                for i in 0..<voxelsPerSlice {
-                    let hi = UInt16(data[data.startIndex + i * 2])
-                    let lo = UInt16(data[data.startIndex + i * 2 + 1])
-                    let u = (hi << 8) | lo
-                    slice[i] = signed
-                        ? Int32(Int16(bitPattern: u))
-                        : Int32(u)
+            // The unsafe bulk reads below assume the component carries at
+            // least voxelsPerSlice samples. The wrapper header's bitDepth
+            // (→ bytesPerSample) and the embedded slice's actual payload
+            // can disagree on malformed input — the old per-voxel Data
+            // subscript trapped there; the pointer reads would silently
+            // over-read, so guard explicitly.
+            guard data.count >= voxelsPerSlice * bytesPerSample else {
+                throw J2KError.decodingError(
+                    "JP3D slice-stack: decoded slice comp \(compIdx) carries " +
+                    "\(data.count) bytes, expected ≥ \(voxelsPerSlice * bytesPerSample)"
+                )
+            }
+            // v10.25: bulk pointer conversion. The previous per-voxel
+            // `Data` subscript loop paid a bounds-check + representation
+            // dispatch per access — 2 per 16-bit sample, ~67M accesses
+            // for a 512×512×128 volume — on every slice of every decode.
+            let slice = data.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> [Int32] in
+                let bytes = src.bindMemory(to: UInt8.self)
+                return [Int32](unsafeUninitializedCapacity: voxelsPerSlice) { dst, n in
+                    if bytesPerSample == 1 {
+                        if signed {
+                            for i in 0..<voxelsPerSlice {
+                                dst[i] = Int32(Int8(bitPattern: bytes[i]))
+                            }
+                        } else {
+                            for i in 0..<voxelsPerSlice {
+                                dst[i] = Int32(bytes[i])
+                            }
+                        }
+                    } else {
+                        // J2KDecoder writes 16-bit samples as big-endian.
+                        if signed {
+                            for i in 0..<voxelsPerSlice {
+                                let u = (UInt16(bytes[i * 2]) << 8) | UInt16(bytes[i * 2 + 1])
+                                dst[i] = Int32(Int16(bitPattern: u))
+                            }
+                        } else {
+                            for i in 0..<voxelsPerSlice {
+                                dst[i] = Int32((UInt16(bytes[i * 2]) << 8) | UInt16(bytes[i * 2 + 1]))
+                            }
+                        }
+                    }
+                    n = voxelsPerSlice
                 }
             }
             out.append(slice)

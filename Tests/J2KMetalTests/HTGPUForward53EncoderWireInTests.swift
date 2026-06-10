@@ -181,13 +181,20 @@ final class HTGPUForward53EncoderWireInTests: XCTestCase {
     ) async throws -> Data {
         let prevEnabled = EncoderPipeline._gpuForward53Enabled
         let prevThreshold = EncoderPipeline._gpuForward53PixelThreshold
+        let prevMultiTileThreshold = EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold
         defer {
             EncoderPipeline._gpuForward53Enabled = prevEnabled
             EncoderPipeline._gpuForward53PixelThreshold = prevThreshold
+            EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold = prevMultiTileThreshold
         }
         EncoderPipeline._gpuForward53Enabled = gpuForward
         if forceGPUThresholdToOne {
             EncoderPipeline._gpuForward53PixelThreshold = 1
+            // v10.25: per-tile GPU forward in multi-tile layouts has
+            // its own knob (production default Int.max = excluded) —
+            // lower it so the GPU leg actually fires for the parity
+            // comparison.
+            EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold = 1
         }
 
         let pipeline = EncoderPipeline(config: config)

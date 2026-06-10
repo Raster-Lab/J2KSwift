@@ -65,7 +65,7 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
         activityTracker?.touch()
         let tEntry = DispatchTime.now()
         let replyBox = ReplyBox(reply)
-        Task.detached {
+        Task.detached(priority: .high) {
             let tTaskStart = DispatchTime.now()
             do {
                 await J2KDecoder.preWarm()
@@ -124,7 +124,7 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
     ) {
         activityTracker?.touch()
         let replyBox = FileReplyBox(reply)
-        Task.detached {
+        Task.detached(priority: .high) {
             do {
                 // Read input via mmap (.alwaysMapped) — zero-copy load.
                 let url = URL(fileURLWithPath: codestreamPath)
@@ -174,7 +174,7 @@ public final class J2KDaemonService: NSObject, J2KDaemonProtocol {
     ) {
         activityTracker?.touch()
         let replyBox = EncodeReplyBox(reply)
-        Task.detached {
+        Task.detached(priority: .high) {
             do {
                 // Build a J2KImage from the inline pixel bytes.
                 let component = J2KComponent(

@@ -1,5 +1,5 @@
 //
-// main.swift
+// CLIMain.swift
 // J2KSwift
 //
 import Foundation
@@ -11,9 +11,17 @@ import J2KFileFormat
 ///
 /// A command-line tool for encoding, decoding, transcoding, validating,
 /// and benchmarking JPEG 2000 images.
-@main
-struct J2KCLI {
-    static func main() async {
+///
+/// Lives in the `J2KCLICore` library target (not the `J2KCLI` executable
+/// target) so that `J2KCLITests` can link against it without pulling an
+/// executable `@main` into the unified test binary. SwiftPM's
+/// swift-testing pass executes the test binary directly; a linked-in
+/// executable entry point hijacks that pass, prints the CLI usage text,
+/// and exits 1 even when every test passes. The `j2k` executable is a
+/// thin `@main` wrapper in `Sources/J2KCLI/main.swift` that calls
+/// `J2KCLI.run()`.
+public struct J2KCLI {
+    public static func run() async {
         let args = CommandLine.arguments
 
         // Handle --version flag at the top level

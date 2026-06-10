@@ -113,50 +113,50 @@ public struct JP3DTileDecomposer: Sendable {
         let region = tile.region
         let srcStride = component.width
         let srcSliceStride = component.width * component.height
-        for z in 0..<td {
-            let srcZ = region.z.lowerBound + z
-            guard srcZ < component.depth else { continue }
-            let srcZOffset = srcZ * srcSliceStride
-            for y in 0..<th {
-                let srcY = region.y.lowerBound + y
-                guard srcY < component.height else { continue }
-                let srcYOffset = srcZOffset + srcY * srcStride
-                for x in 0..<tw {
-                    let srcX = region.x.lowerBound + x
-                    guard srcX < component.width else { continue }
-                    let srcIdx = srcYOffset + srcX
-                    let byteOffset = srcIdx * bytesPerSample
-                    let dstIdx = z * tw * th + y * tw + x
-                    if byteOffset + bytesPerSample <= component.data.count {
-                        data[dstIdx] = readSample(
-                            from: component.data,
-                            at: byteOffset,
-                            bytesPerSample: bytesPerSample,
-                            signed: component.signed
-                        )
+        // v10.25: hoist the `Data` buffer access out of the per-voxel
+        // triple loop. The previous `readSample(from: Data, ...)` paid
+        // `bytesPerSample` bounds-checked Data subscripts per voxel —
+        // for a whole-volume encode that is ~2 accesses per 16-bit
+        // voxel across every tile of every component.
+        let signed = component.signed
+        let dataCount = component.data.count
+        component.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            data.withUnsafeMutableBufferPointer { dst in
+                for z in 0..<td {
+                    let srcZ = region.z.lowerBound + z
+                    guard srcZ < component.depth else { continue }
+                    let srcZOffset = srcZ * srcSliceStride
+                    for y in 0..<th {
+                        let srcY = region.y.lowerBound + y
+                        guard srcY < component.height else { continue }
+                        let srcYOffset = srcZOffset + srcY * srcStride
+                        for x in 0..<tw {
+                            let srcX = region.x.lowerBound + x
+                            guard srcX < component.width else { continue }
+                            let srcIdx = srcYOffset + srcX
+                            let byteOffset = srcIdx * bytesPerSample
+                            let dstIdx = z * tw * th + y * tw + x
+                            if byteOffset + bytesPerSample <= dataCount {
+                                var value = 0
+                                for b in 0..<bytesPerSample {
+                                    value |= Int(bytes[byteOffset + b]) << (b * 8)
+                                }
+                                if signed && bytesPerSample > 0 {
+                                    let signBit = 1 << (bytesPerSample * 8 - 1)
+                                    if value & signBit != 0 {
+                                        value -= (signBit << 1)
+                                    }
+                                }
+                                dst[dstIdx] = Float(value)
+                            }
+                        }
                     }
                 }
             }
         }
 
         return JP3DTileData(tile: tile, componentIndex: componentIndex, data: data)
-    }
-
-    /// Reads a single sample value from component data bytes.
-    private func readSample(
-        from data: Data, at offset: Int, bytesPerSample: Int, signed: Bool
-    ) -> Float {
-        var value: Int = 0
-        for b in 0..<bytesPerSample {
-            value |= Int(data[offset + b]) << (b * 8)
-        }
-        if signed && bytesPerSample > 0 {
-            let signBit = 1 << (bytesPerSample * 8 - 1)
-            if value & signBit != 0 {
-                value -= (signBit << 1)
-            }
-        }
-        return Float(value)
     }
 
     /// Returns a tiling configuration clamped to volume dimensions.

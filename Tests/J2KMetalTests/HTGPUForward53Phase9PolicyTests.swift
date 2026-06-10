@@ -63,6 +63,7 @@ final class HTGPUForward53Phase9PolicyTests: XCTestCase {
     override func tearDown() {
         EncoderPipeline._gpuForward53Enabled = false
         EncoderPipeline._gpuForward53PixelThreshold = 4_000_000
+        EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold = 3_000_000
         super.tearDown()
     }
 
@@ -162,6 +163,11 @@ final class HTGPUForward53Phase9PolicyTests: XCTestCase {
 
         EncoderPipeline._gpuForward53Enabled = true
         EncoderPipeline._gpuForward53PixelThreshold = 1  // forces GPU on every tile
+        // v10.25: multi-tile per-tile dispatches carry their own
+        // threshold (default Int.max = excluded in production);
+        // lower it too so this test still proves the gate is
+        // threshold-driven, not structurally CPU-only.
+        EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold = 1
 
         let image = syntheticImage(width: 2800, height: 2288, seed: 0xDEAD_BABE)
         let cfg = htConfig()

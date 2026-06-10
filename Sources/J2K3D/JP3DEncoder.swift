@@ -432,13 +432,20 @@ public actor JP3DEncoder {
         var components: [J2KVolumeComponent] = []
         for c in 0..<componentCount {
             let start = c * voxelsPerComponent
-            var componentBytes = Data(count: voxelsPerComponent * bytesPerSample)
-            for i in 0..<voxelsPerComponent {
-                let value = Int(roundf(data[start + i]))
-                for b in 0..<bytesPerSample {
-                    componentBytes[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: value >> (b * 8))
+            // v10.25: contiguous [UInt8] serialization — see
+            // JP3DDecoder.assembleVolumeComponents (per-byte mutable
+            // Data subscripts pay a CoW check per access).
+            let byteCount = voxelsPerComponent * bytesPerSample
+            let bytes = [UInt8](unsafeUninitializedCapacity: byteCount) { dst, n in
+                for i in 0..<voxelsPerComponent {
+                    let value = Int(roundf(data[start + i]))
+                    for b in 0..<bytesPerSample {
+                        dst[i * bytesPerSample + b] = UInt8(truncatingIfNeeded: value >> (b * 8))
+                    }
                 }
+                n = byteCount
             }
+            let componentBytes = Data(bytes)
             let component = J2KVolumeComponent(
                 index: c,
                 bitDepth: bitDepth,

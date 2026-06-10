@@ -557,7 +557,10 @@ struct EncoderPipeline: Sendable {
         ) { group in
             for k in 0..<layout.tileCount {
                 let r = layoutRef.rect(forTile: k)
-                group.addTask {
+                // v10.25: `.high` priority — per-tile encode carries the
+                // whole hot path (slice + DWT + entropy); default priority
+                // spills to E-cores. Mirrors the v10.24.2 decode QoS fix.
+                group.addTask(priority: .high) {
                     let subImage = try J2KTileImageSlicer.sliceTile(
                         from: imageRef, layout: layoutRef, tileIndex: k)
                     let t0 = CFAbsoluteTimeGetCurrent()
@@ -723,7 +726,8 @@ struct EncoderPipeline: Sendable {
         let (decompositions, actualLevels) = try await applyWaveletTransform(
             transformedData, floatComponents: transformedFloatData,
             width: tileImage.width, height: tileImage.height,
-            tileOriginX: tileOriginX, tileOriginY: tileOriginY)
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+            isMultiTilePerTile: true)
         do {
             let t = CFAbsoluteTimeGetCurrent()
             J2KEncodeTimings.recordWaveletTransform(t - stageStart)
@@ -2734,7 +2738,15 @@ struct EncoderPipeline: Sendable {
     private func applyWaveletTransform(
         _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int,
-        tileOriginX: Int = 0, tileOriginY: Int = 0
+        tileOriginX: Int = 0, tileOriginY: Int = 0,
+        // v10.25 — set by the multi-tile per-tile entry. The GPU
+        // forward 5/3 pixel threshold was designed to exclude
+        // multi-tile per-tile dispatches ("per-tile dim is always
+        // ≪ 4 MP for the production .auto layouts"), but the v9.6
+        // MG 2x2 override produces 4.21 MP tiles that breach it by
+        // size alone. Make the design intent explicit instead of
+        // implicit in a size assumption.
+        isMultiTilePerTile: Bool = false
     ) async throws -> ([[SubbandInfo]], Int) {
         // Select filter based on wavelet kernel configuration
         let filter: J2KDWT1D.Filter
@@ -2786,7 +2798,11 @@ struct EncoderPipeline: Sendable {
                     compIdx < fc.count ? fc[compIdx] : nil
                 }
 
-                group.addTask {
+                // v10.25: `.high` priority — the forward DWT is the
+                // dominant encode stage (~60% of DX wall); a default-
+                // priority task is E-core-eligible (3-4× slower).
+                // Mirrors the v10.24.2 decode-entropy QoS fix.
+                group.addTask(priority: .high) {
                     let use97DoublePrecision: Bool
                     if case .irreversible97 = componentFilter { use97DoublePrecision = true }
                     else { use97DoublePrecision = false }
@@ -2862,9 +2878,17 @@ struct EncoderPipeline: Sendable {
                         let metalAvailable = J2KMetalDWT.isAvailable
                         let pixels = width * height
                         let pixelOK = pixels >= Self._gpuForward53PixelThreshold
+                        // v10.25: multi-tile per-tile dispatches carry
+                        // their own threshold knob (default = the
+                        // single-tile threshold, so production routing
+                        // matches v10.24.2 — see the knob's doc for the
+                        // 2026-06-10 A/B that rejected excluding MG 2x2).
+                        let multiTileOK = !isMultiTilePerTile
+                            || pixels >= Self._gpuForward53MultiTilePerTilePixelThreshold
                         let useGPUForward = Self._gpuForward53Enabled
                             && metalAvailable
                             && pixelOK
+                            && multiTileOK
 
                         if useGPUForward {
                             // v6-alpha5 phase 3 — share the
@@ -2953,6 +2977,8 @@ struct EncoderPipeline: Sendable {
                                 reason = .envDisabled
                             } else if !metalAvailable {
                                 reason = .metalUnavailable
+                            } else if pixelOK && !multiTileOK {
+                                reason = .multiTilePerTile
                             } else {
                                 reason = .belowThreshold
                             }
@@ -5270,6 +5296,24 @@ struct EncoderPipeline: Sendable {
     /// smaller fixtures (where the bytes are still byte-identical
     /// even though wall time regresses).
     nonisolated(unsafe) static var _gpuForward53PixelThreshold: Int = 3_000_000
+
+    /// v10.25 — separate pixel threshold for multi-tile PER-TILE GPU
+    /// forward 5/3 dispatches, making the routing decision explicit
+    /// instead of implicit in the single-tile threshold.
+    ///
+    /// History: the v6-alpha5 Phase 5 table records multi-tile
+    /// per-tile GPU forward at −34 % to −44 % — measured when
+    /// concurrent tile dispatches serialised on ONE shared
+    /// MTLCommandQueue. Phase 6 then gave the forward path fresh
+    /// per-call queues, invalidating that table. A 2026-06-10 warm
+    /// in-proc A/B (M2, release, median-of-7) confirmed the table is
+    /// stale: excluding MG 2x2 tiles (4.21 MP, the only production
+    /// layout above 3 MP per tile) regressed MG encode by +20 to
+    /// +35 ms. The default therefore matches the single-tile
+    /// threshold — production routing is identical to v10.24.2 —
+    /// and the knob exists for cross-silicon tuning + the
+    /// `.multiTilePerTile` telemetry reason.
+    nonisolated(unsafe) static var _gpuForward53MultiTilePerTilePixelThreshold: Int = 3_000_000
 
     // MARK: - v6-alpha6 phase 1.2: GPU forward HT entropy gate
     //

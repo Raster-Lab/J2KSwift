@@ -148,13 +148,17 @@ public struct J2KMetalHTDispatchProbe: Sendable {
 
         let gpuKernelTime = max(0.0, cb.gpuEndTime - cb.gpuStartTime)
 
-        var output = [Int32](repeating: 0, count: outputSampleCount)
+        // `withUnsafeMutableBytes { copyBytes }` after `await
+        // cb.completed()` deadlocks in release builds (see the
+        // readback note in J2KMetalHTCleanup).
+        var output: [Int32] = []
         if outputSampleCount > 0 {
-            output.withUnsafeMutableBytes { dst in
-                dst.copyBytes(from: UnsafeRawBufferPointer(
-                    start: outputBuffer.contents(),
-                    count: outputSampleCount * MemoryLayout<Int32>.stride
-                ))
+            let ptr = outputBuffer.contents()
+            output = [Int32](unsafeUninitializedCapacity: outputSampleCount) { dst, initialized in
+                dst.baseAddress!.update(
+                    from: ptr.assumingMemoryBound(to: Int32.self),
+                    count: outputSampleCount)
+                initialized = outputSampleCount
             }
         }
 
