@@ -37,7 +37,7 @@ JP3D extends JPEG 2000 to three-dimensional data — CT/MRI volumes, multispectr
 - `Sources/J2KMetal/JP3DMetalDWT.swift` — Metal GPU 3D DWT
 - `Sources/J2KVulkan/J2KVulkanJP3DDWT.swift` — Vulkan GPU 3D DWT
 - `Sources/JPIP/JP3D*.swift` — 3D JPIP streaming (5 files)
-- `Sources/J2KCLI/Encode3D.swift`, `Decode3D.swift` — CLI commands
+- `Sources/J2KCLICore/Encode3D.swift`, `Decode3D.swift` — CLI commands
 
 ## Constraints
 - DO NOT break 2D codec compatibility — JP3D extends, not replaces

@@ -216,7 +216,7 @@ let package = Package(
             dependencies: ["JPIP", "J2KCodec"]),
         .testTarget(
             name: "J2KCLITests",
-            dependencies: ["J2KCore", "J2KCLI"]),
+            dependencies: ["J2KCore", "J2KCLICore"]),
         .testTarget(
             name: "JP3DTests",
             dependencies: ["J2K3D", "J2KCore", "JPIP"]),
@@ -242,9 +242,20 @@ let package = Package(
         .systemLibrary(
             name: "CZlib",
             path: "Sources/CZlib"),
+        // All CLI command logic. A library (not the executable) so that
+        // J2KCLITests can depend on it without linking an executable
+        // `@main` into the unified test binary — a linked-in CLI entry
+        // point hijacks SwiftPM's swift-testing pass (which executes the
+        // test binary directly), printing CLI usage and exiting 1 even
+        // when every XCTest suite passes.
+        .target(
+            name: "J2KCLICore",
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib", "J2KDaemonClient"],
+            path: "Sources/J2KCLICore"),
+        // Thin `@main` wrapper producing the `j2k` executable.
         .executableTarget(
             name: "J2KCLI",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib", "J2KDaemonClient"],
+            dependencies: ["J2KCLICore"],
             path: "Sources/J2KCLI",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
@@ -277,7 +288,7 @@ let package = Package(
         // v8 Phase 6.3 — XPC daemon executable. macOS-only.
         .executableTarget(
             name: "J2KDaemon",
-            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore"],
+            dependencies: ["J2KDaemonProtocol", "J2KDaemonCore", "J2KCodec"],
             path: "Sources/J2KDaemon",
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
