@@ -1,0 +1,92 @@
+{
+  "ct_real_mid_512x512.pgm": {
+    "first_encode_median_ms": 42.679584,
+    "first_decode_median_ms": 3.446583,
+    "samples_encode": [
+      55.761833,
+      52.361584,
+      40.898042,
+      42.679584,
+      38.139875
+    ],
+    "samples_decode": [
+      3.370042,
+      3.446583,
+      3.263625,
+      3.765291,
+      3.484292
+    ]
+  },
+  "xa_real_mid_1024x1024.pgm": {
+    "first_encode_median_ms": 52.420416,
+    "first_decode_median_ms": 9.666791,
+    "samples_encode": [
+      43.087083,
+      45.892875,
+      98.175875,
+      54.934958,
+      52.420416
+    ],
+    "samples_decode": [
+      9.765125,
+      9.792125,
+      9.430292,
+      9.666791,
+      8.24575
+    ]
+  },
+  "px_real_mid_2793x1316.pgm": {
+    "first_encode_median_ms": 70.700708,
+    "first_decode_median_ms": 31.540958,
+    "samples_encode": [
+      60.406291,
+      67.384333,
+      70.700708,
+      72.356291,
+      75.001959
+    ],
+    "samples_decode": [
+      31.540958,
+      30.974542,
+      31.578083,
+      31.452791,
+      32.249875
+    ]
+  },
+  "dx_real_mid_2800x2288.pgm": {
+    "first_encode_median_ms": 91.533541,
+    "first_decode_median_ms": 50.52725,
+    "samples_encode": [
+      92.490958,
+      89.819125,
+      93.964542,
+      91.533541,
+      89.94075
+    ],
+    "samples_decode": [
+      50.52725,
+      49.393542,
+      51.4475,
+      51.569292,
+      50.352334
+    ]
+  },
+  "mg_real_mid_3518x4784.pgm": {
+    "first_encode_median_ms": 119.515375,
+    "first_decode_median_ms": 81.680333,
+    "samples_encode": [
+      113.275,
+      128.501375,
+      123.89425,
+      115.141916,
+      119.515375
+    ],
+    "samples_decode": [
+      99.136791,
+      82.257583,
+      77.749959,
+      81.680333,
+      79.592167
+    ]
+  }
+}
