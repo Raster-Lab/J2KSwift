@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [`Documentation/releases/`](Documentation/releases/) as
 > `RELEASE_NOTES_vX.Y.Z.md`; this file resumes at v10.9.1.
 
+## [11.0.0] — 2026-06-10
+
+**Dead-weight removal + packaging MAJOR — ~125K deleted lines, zero codec behaviour change**
+
+### Removed (MAJOR)
+
+- Exported products `J2KAccelerate` (16.5K lines), `J2KVulkan` (4.2K), `J2KXS` (2.3K) — all verified production-dead.
+- MJ2 container stack in J2KFileFormat (33 public symbols, zero callers); x86 SSE/AVX2 code + Intel bench infra; dead pool/allocator modules; dead concurrency infra (J2KThreadPool/J2KGCDDispatcher/J2KConcurrencyTuning); benchmark/probe files compiled into production libraries (metallib regenerated); Part-2/3-10/4/15 one-shot conformance suites + OpenJPEG interop pipeline (Part-1 validators and the DICOMKit-consumed HT conformance API survive unchanged); orphan Sources/ dirs; ~23 MB tracked artifacts (release-cited captures moved to Documentation/Benchmarks/data/).
+
+### Changed
+
+- `J2KTestAppModels` → new `J2KTestAppCore` library target (consumed by the shipping `j2k testapp --headless`).
+- Manifest is **unsafeFlags-free** → J2KSwift is now consumable as a versioned SwiftPM dependency (verified). Entry files renamed (`main.swift` → `Entry.swift`/`J2KDaemonMain.swift`); NEON `-O3` removal A/B-measured as a wash (DX −0.44 ms / MG +1.35 ms / CT +0.06 ms).
+
+### Metrics (Apple M2)
+
+- Clean debug build 52.8 → 39.8 s (−24.6%); Sources/ 178.3K → 144.4K lines (−19%); tracked repo −25 MB; `j2k` binary −18.2% (14.69→12.02 MB), `j2kd` −36.5% (10.05→6.38 MB).
+- Codestream bytes + decoded pixels identical to v10.25.0; gate + touched suites 271/271, exit 0.
+
 ## [10.25.0] — 2026-06-10
 
 **Optimization-audit release — GPU iDWT stale-gate cluster, QoS, JP3D hot loops, CLI partial decode, multi-tile partial-resolution fix**
