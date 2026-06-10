@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [`Documentation/releases/`](Documentation/releases/) as
 > `RELEASE_NOTES_vX.Y.Z.md`; this file resumes at v10.9.1.
 
+## [10.25.0] — 2026-06-10
+
+**Optimization-audit release — GPU iDWT stale-gate cluster, QoS, JP3D hot loops, CLI partial decode, multi-tile partial-resolution fix**
+
+Implements the actionable findings of a full-project 8-dimension optimization audit (`OPTIMIZATION_AUDIT_2026-06-10.md`). Codestream bytes byte-identical to v10.24.2; decoded pixels bit-identical on CPU and GPU paths. MINOR.
+
+### Added
+
+- CLI `--level` → `decodeResolution` (3-8× thumbnails; DX multi-tile 10 ms vs 57 ms full) and `--region x,y,w,h` → `decodeRegion(.direct)`.
+- True multi-tile partial-resolution decode (`outputDepthOffset` parity anchoring + reduced-canvas composite).
+- `J2KCLICore` library target (thin `@main` wrapper keeps the `j2k` executable product unchanged).
+- `EncoderPipeline._gpuForward53MultiTilePerTilePixelThreshold` routing knob + `.multiTilePerTile` telemetry reason.
+- `J2KMetalDWT.fusedKernelEligible(...)` public routing predicate.
+- j2kd daemon pre-warms at startup (with lossy 9/7 + new lossless 5/3 warmup dispatches).
+
+### Fixed
+
+- **Multi-tile `decodeResolution` corruption (since v10.5.0)** — junk pixels + full-size buffers with reduced dims on the production `.auto` multi-tile layouts; smoke tests strengthened to assert buffer sizes and content.
+- **CLI stdin/stdout piping** — `-i -`/`-o -` parsed the pipe sentinel as a flag terminator; every documented piping example was non-functional.
+- **Daemon multi-component silent data loss** — client now throws on multi-component decode replies; CLI falls back in-process.
+- **`swift test` exit 1 on full pass** — executable `@main` hijacked SwiftPM's swift-testing pass; fixed by the J2KCLICore split.
+- 11 remaining instances of the release-mode Metal readback deadlock pattern.
+- JP3D `readImageAsInt32` gains an explicit byte-count guard (the bulk rewrite would otherwise have dropped the old trapping bounds check).
+- Dead `J2K_GPU_HT_ENTROPY` setenv removed (pipeline reads `J2K_GPU_HT_ENTROPY_DECODE`).
+
+### Performance (Apple M2, warm, release)
+
+- MG decode −8 to −10 ms (multi-level fused iDWT un-gate + fresh per-tile queues + pool fixes + QoS): **J2KSwift now leads Kakadu and Grok on MG small + mid decode**; large-medical decode geomean gap 1.27× → 1.16×.
+- DX/CT/XA decode and all encode fixtures within the ±3 ms noise band; encoder bytes byte-identical.
+- JP3D volume paths: per-voxel `Data` subscripts (~67 M bounds-checked accesses per 512×512×128 decode) replaced with bulk pointer conversion.
+
 ## [10.9.2] — 2026-05-21
 
 **Stability + packaging patch**
