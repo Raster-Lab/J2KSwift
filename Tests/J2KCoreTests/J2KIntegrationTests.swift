@@ -254,36 +254,6 @@ final class J2KIntegrationTests: XCTestCase {
 
     // MARK: - Memory Management Integration Tests
 
-    /// Tests memory pool and tracker working together.
-    func testMemoryManagementIntegration() async throws {
-        let pool = J2KMemoryPool()
-        let tracker = J2KMemoryTracker(limit: 1024 * 1024) // 1MB limit
-
-        var buffers: [J2KBuffer] = []
-
-        // Acquire multiple buffers
-        for _ in 0..<10 {
-            let buffer = await pool.acquire(capacity: 4096)
-            try await tracker.allocate(buffer.capacity)
-            buffers.append(buffer)
-        }
-
-        // Verify tracking
-        let stats = await tracker.getStatistics()
-        XCTAssertGreaterThan(stats.currentUsage, 0)
-        XCTAssertLessThanOrEqual(stats.currentUsage, 1024 * 1024)
-
-        // Release all buffers
-        for buffer in buffers {
-            await tracker.deallocate(buffer.capacity)
-            await pool.release(buffer)
-        }
-
-        // Verify cleanup
-        let finalStats = await tracker.getStatistics()
-        XCTAssertEqual(finalStats.currentUsage, 0)
-    }
-
     /// Tests that memory limits are enforced.
     func testMemoryLimitEnforcement() async throws {
         let tracker = J2KMemoryTracker(limit: 1000)

@@ -231,28 +231,6 @@ final class MJ2CrossPlatformTests: XCTestCase {
         await encoder.cancelEncoding()
     }
 
-    // MARK: - x86-64 Tests
-
-    func testX86Availability() {
-        #if arch(x86_64)
-        XCTAssertTrue(MJ2X86.isAvailable, "MJ2X86 should be available on x86_64")
-
-        let features = MJ2X86.cpuFeatures()
-        XCTAssertTrue(features["SSE4.2"] ?? false)
-        XCTAssertTrue(features["AVX"] ?? false)
-        XCTAssertTrue(features["AVX2"] ?? false)
-        XCTAssertFalse(features["NEON"] ?? true)
-        XCTAssertFalse(features["AMX"] ?? true)
-
-        let warning = MJ2X86.deprecationWarning()
-        XCTAssertFalse(warning.isEmpty, "Should have deprecation warning")
-        XCTAssertTrue(warning.contains("x86-64"))
-
-        #else
-        XCTAssertFalse(MJ2X86.isAvailable, "MJ2X86 should not be available on non-x86_64")
-        #endif
-    }
-
     // MARK: - Codec Tests
 
     func testVideoCodecCases() {

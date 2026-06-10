@@ -98,10 +98,9 @@ final class DiagnosticsTests: XCTestCase {
     func testModuleList() {
         let modules = [
             "J2KCore", "J2KCodec", "J2KFileFormat",
-            "J2KAccelerate", "J2K3D", "JPIP",
-            "J2KMetal", "J2KVulkan", "J2KXS"
+            "J2K3D", "JPIP", "J2KMetal"
         ]
-        XCTAssertEqual(modules.count, 9, "Should list 9 modules")
+        XCTAssertEqual(modules.count, 6, "Should list 6 modules")
     }
 
     // MARK: - Feature flags

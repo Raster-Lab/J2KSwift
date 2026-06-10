@@ -90,87 +90,6 @@ final class J2KMemoryManagementTests: XCTestCase {
         XCTAssertEqual(buffer.count, 100)
     }
 
-    // MARK: - J2KMemoryPool Tests
-
-    func testMemoryPoolAcquireAndRelease() async throws {
-        let pool = J2KMemoryPool()
-
-        let buffer = await pool.acquire(capacity: 1024)
-        XCTAssertGreaterThanOrEqual(buffer.capacity, 1024)
-
-        await pool.release(buffer)
-
-        let stats = await pool.statistics()
-        XCTAssertGreaterThan(stats["bufferCount"] ?? 0, 0)
-    }
-
-    func testMemoryPoolReuse() async throws {
-        let pool = J2KMemoryPool()
-
-        // Acquire and release a buffer
-        let buffer1 = await pool.acquire(capacity: 1024)
-        let capacity1 = buffer1.capacity
-        await pool.release(buffer1)
-
-        // Acquire again with same size - should reuse
-        let buffer2 = await pool.acquire(capacity: 1024)
-        XCTAssertEqual(buffer2.capacity, capacity1)
-    }
-
-    func testMemoryPoolClear() async throws {
-        let pool = J2KMemoryPool()
-
-        // Add some buffers
-        let buffer1 = await pool.acquire(capacity: 1024)
-        await pool.release(buffer1)
-
-        let buffer2 = await pool.acquire(capacity: 2048)
-        await pool.release(buffer2)
-
-        var stats = await pool.statistics()
-        XCTAssertGreaterThan(stats["bufferCount"] ?? 0, 0)
-
-        // Clear the pool
-        await pool.clear()
-
-        stats = await pool.statistics()
-        XCTAssertEqual(stats["bufferCount"] ?? -1, 0)
-        XCTAssertEqual(stats["totalSize"] ?? -1, 0)
-    }
-
-    func testMemoryPoolConfiguration() async throws {
-        let config = J2KMemoryPool.Configuration(maxBuffers: 5, maxTotalSize: 10240)
-        let pool = J2KMemoryPool(configuration: config)
-
-        // Fill the pool
-        var buffers: [J2KBuffer] = []
-        for _ in 0..<10 {
-            buffers.append(await pool.acquire(capacity: 1024))
-        }
-
-        // Release all
-        for buffer in buffers {
-            await pool.release(buffer)
-        }
-
-        // Pool should enforce limits
-        let stats = await pool.statistics()
-        let bufferCount = stats["bufferCount"] ?? 0
-        XCTAssertLessThanOrEqual(bufferCount, 10) // Some may be kept
-    }
-
-    func testMemoryPoolStatistics() async throws {
-        let pool = J2KMemoryPool()
-
-        let buffer = await pool.acquire(capacity: 4096)
-        await pool.release(buffer)
-
-        let stats = await pool.statistics()
-        XCTAssertGreaterThan(stats["bufferCount"] ?? 0, 0)
-        XCTAssertGreaterThan(stats["totalSize"] ?? 0, 0)
-        XCTAssertGreaterThan(stats["capacityBuckets"] ?? 0, 0)
-    }
-
     // MARK: - J2KMemoryTracker Tests
 
     func testMemoryTrackerAllocation() async throws {
@@ -419,32 +338,6 @@ final class J2KMemoryManagementTests: XCTestCase {
     }
 
     // MARK: - Integration Tests
-
-    func testIntegrationMemoryPoolWithTracker() async throws {
-        let pool = J2KMemoryPool()
-        let tracker = J2KMemoryTracker(limit: 100 * 1024) // 100KB limit
-
-        // Acquire buffers and track memory
-        var buffers: [J2KBuffer] = []
-        for _ in 0..<10 {
-            let buffer = await pool.acquire(capacity: 4096)
-            try await tracker.allocate(buffer.capacity)
-            buffers.append(buffer)
-        }
-
-        let stats = await tracker.getStatistics()
-        XCTAssertGreaterThan(stats.currentUsage, 0)
-        XCTAssertLessThanOrEqual(stats.currentUsage, 100 * 1024)
-
-        // Release buffers
-        for buffer in buffers {
-            await tracker.deallocate(buffer.capacity)
-            await pool.release(buffer)
-        }
-
-        let finalStats = await tracker.getStatistics()
-        XCTAssertEqual(finalStats.currentUsage, 0)
-    }
 
     func testImageBufferMemoryEfficiency() throws {
         // Create many image buffers and verify COW works

@@ -18,16 +18,12 @@ You are an OpenJPEG benchmarking specialist for J2KSwift. Your job is to run com
 ### Benchmark & Comparison Files (Sources/J2KCore/)
 | File | Purpose |
 |------|---------|
-| `J2KOpenJPEGBenchmark.swift` | OpenJPEG comparison benchmarks |
 | `J2KBenchmark.swift` | Benchmark framework |
-| `J2KReferenceBenchmark.swift` | Reference benchmark comparisons |
 | `J2KPipelineProfiler.swift` | Stage-by-stage pipeline timing |
-| `J2KPerformanceValidation.swift` | Performance regression detection |
 
 ### Benchmark Scripts (Scripts/)
 | Script | Purpose |
 |--------|---------|
-| `benchmark_openjpeg.sh` | OpenJPEG comparison runner |
 | `compare_performance.py` | Performance data analysis |
 | `medical_benchmark.py` | Medical image benchmark |
 | `medical_image_benchmark.sh` | Medical benchmark runner |
@@ -35,7 +31,6 @@ You are an OpenJPEG benchmarking specialist for J2KSwift. Your job is to run com
 ### Test Suites
 | Test Directory | Purpose |
 |----------------|---------|
-| `Tests/PerformanceTests/` | `measure {}` benchmarks |
 | `Tests/J2KCoreTests/` | Core codec correctness + conformance |
 | `Tests/J2KMetalTests/` | GPU acceleration benchmarks |
 

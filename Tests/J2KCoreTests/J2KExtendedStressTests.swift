@@ -113,61 +113,6 @@ final class J2KExtendedStressTests: XCTestCase {
         XCTAssertEqual(copy[size - 1], original[size - 1])
     }
 
-    // MARK: - Memory Pool Stress Tests
-
-    func testMemoryPoolHighConcurrencyAcquireRelease() async throws {
-        let pool = J2KMemoryPool()
-        let iterations = 200
-
-        await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<iterations {
-                group.addTask {
-                    let buffer = await pool.acquire(capacity: 4096)
-                    XCTAssertGreaterThanOrEqual(buffer.capacity, 4096)
-                    await pool.release(buffer)
-                }
-            }
-        }
-    }
-
-    func testMemoryPoolVariableSizeAcquireRelease() async throws {
-        let pool = J2KMemoryPool()
-        let sizes = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
-
-        for size in sizes {
-            let buffer = await pool.acquire(capacity: size)
-            XCTAssertGreaterThanOrEqual(buffer.capacity, size)
-            await pool.release(buffer)
-        }
-    }
-
-    func testMemoryPoolSustainedSequentialLoad() async throws {
-        let pool = J2KMemoryPool()
-        for i in 0..<1000 {
-            let capacity = 256 + (i % 8) * 256
-            let buffer = await pool.acquire(capacity: capacity)
-            XCTAssertGreaterThanOrEqual(buffer.capacity, capacity)
-            await pool.release(buffer)
-        }
-    }
-
-    func testMemoryPoolHoldAndRelease() async throws {
-        let pool = J2KMemoryPool()
-        var held: [J2KBuffer] = []
-
-        // Acquire 50 buffers without releasing
-        for _ in 0..<50 {
-            let buffer = await pool.acquire(capacity: 1024)
-            held.append(buffer)
-        }
-        XCTAssertEqual(held.count, 50)
-
-        // Release all at once
-        for buffer in held {
-            await pool.release(buffer)
-        }
-    }
-
     // MARK: - Memory Tracker Stress Tests
 
     func testMemoryTrackerHighConcurrencyAllocDealloc() async throws {

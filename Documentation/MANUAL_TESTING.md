@@ -52,18 +52,16 @@ Comprehensive manual testing documentation for J2KSwift v2.3.0, organised phase 
 |--------|------:|------------------|
 | J2KCoreTests | 734 | Core types, memory, bitstream, markers, platform |
 | J2KCodecTests | 1,679 | Entropy coding, DWT, quantization, colour, HTJ2K, pipeline |
-| J2KAccelerateTests | 367 | Hardware acceleration, SIMD, Neon, SSE, vImage |
-| J2KFileFormatTests | 384 | JP2 boxes, file I/O, MJ2 format |
+| J2KFileFormatTests | 384 | JP2 boxes, file I/O |
 | JPIPTests | 478 | JPIP client/server, streaming, cache, WebSocket |
 | J2KMetalTests | 314 | Metal GPU compute, DWT, colour, quantization |
 | J2KTestAppTests | 309 | GUI test app models and view models |
 | J2KComplianceTests | 304 | ISO conformance Parts 1, 2, 3, 10, 15 |
 | JP3DTests | 405 | 3D volumetric, multi-spectral, HTJ2K 3D |
-| PerformanceTests | 154 | Benchmarks, validation, OpenJPEG comparison |
-| J2KInteroperabilityTests | 142 | OpenJPEG cross-validation |
-| J2KVulkanTests | 85 | Vulkan GPU compute, DWT, colour |
-| J2KXSTests | 52 | JPEG XS codec |
 | J2KCLITests | 12 | Command-line interface |
+
+> The `J2KAccelerateTests`, `J2KVulkanTests`, `J2KXSTests`, `PerformanceTests`, and `J2KInteroperabilityTests` targets were Removed in v11.0.0 along with the machinery they covered (see RELEASE_NOTES_v11.0.0.md).
+> Counts above are a historical snapshot; run `swift test --list-tests` for current totals.
 
 ---
 
@@ -781,10 +779,8 @@ swift test --filter JP3DTests
 
 ### Sub-phase 17c: Intel x86-64 Optimisation
 
-| Area | Test Class | Target |
-|------|-----------|--------|
-| SSE transforms | `J2KSSETransformTests` | J2KAccelerateTests |
-| x86 platform | `J2KAccelerateX86Tests` | J2KAccelerateTests |
+> Removed in v11.0.0 — the x86 SSE/AVX code and its test classes were deleted
+> as part of the Apple-Silicon-first narrowing (see RELEASE_NOTES_v11.0.0.md).
 
 ### Sub-phase 17d: ISO Part 4 Conformance
 
@@ -935,65 +931,20 @@ swift test --filter JP3DTests.JP3DMultiSpectralTests
 
 #### TC-19.2: Vulkan JP3D Acceleration (Week 322-324)
 
-15 tests in `J2KVulkanJP3DDWTTests` covering GPU 3D wavelet transforms, auto backend selection (GPU/CPU), and statistics tracking.
-
-```bash
-swift test --filter J2KVulkanTests.J2KVulkanJP3DDWTTests
-```
+> Removed in v11.0.0 — the `J2KVulkan` module and its test suite were deleted
+> (see RELEASE_NOTES_v11.0.0.md).
 
 #### TC-19.3: JPEG XS Types (Week 325)
 
-21 tests in `J2KXSTypesTests` covering profile/level enums, configuration structs, and capability queries.
-
-```bash
-swift test --filter J2KCoreTests.J2KXSTypesTests
-```
+> Removed in v11.0.0 — the JPEG XS exploration types and their test suite were
+> deleted (see RELEASE_NOTES_v11.0.0.md).
 
 ---
 
 ## Phase 20: JPEG XS Core Codec (v2.3.0)
 
-**Goal**: JPEG XS (ISO/IEC 21122) low-latency codec implementation.
-
-### Test Target: J2KXSTests (52 tests)
-
-#### TC-20.1: Image Types and API
-
-| ID | Test Case | Function | Expected Result |
-|----|-----------|----------|-----------------|
-| 20.1.1 | Capabilities available | `testCapabilitiesIsAvailableTrue` | v2.3.0 available |
-| 20.1.2 | Supported profiles | `testCapabilitiesSupportedProfiles` | All 3 profiles |
-| 20.1.3 | Version string | `testCapabilitiesVersion` | "2.3.0" |
-| 20.1.4 | Error equality | `testErrorEquality` | Equatable errors |
-| 20.1.5 | Encode result | `testEncodeResultProperties` | Size/slice count |
-| 20.1.6 | Decode result | `testDecodeResultProperties` | Decoded image |
-
-#### TC-20.2: DWT Engine
-
-| ID | Test Case | Function | Expected Result |
-|----|-----------|----------|-----------------|
-| 20.2.1 | Forward DWT | `testDWTEngineForwardSmallSlice` | Haar lifting |
-| 20.2.2 | Inverse round-trip | `testDWTEngineInverseRoundTrip` | Perfect reconstruction |
-| 20.2.3 | Orientation cases | `testDWTOrientationAllCases` | All orientations |
-| 20.2.4 | Orientation labels | `testDWTOrientationLabels` | Human-readable |
-| 20.2.5 | Decomposition result | `testDWTEngineDecompositionResultApproximation` | Approximation band |
-| 20.2.6 | Reset statistics | `testDWTEngineResetStatistics` | Counters zeroed |
-| 20.2.7 | Sample mismatch | `testDWTEngineSampleCountMismatch` | Error thrown |
-| 20.2.8 | Too small | `testDWTEngineTooSmallForLevels` | Error thrown |
-
-#### TC-20.3: Encoder/Decoder
-
-| ID | Test Case | Function | Expected Result |
-|----|-----------|----------|-----------------|
-| 20.3.1 | Encode small RGB | `testEncoderEncodeSmallRGBImage` | Valid codestream |
-| 20.3.2 | Plane mismatch | `testEncoderPlaneMismatchThrows` | Error thrown |
-| 20.3.3 | Unsupported profile | `testEncoderUnsupportedProfileThrows` | Error thrown |
-| 20.3.4 | Decode small | `testDecoderDecodeSmallImage` | Decoded image |
-| 20.3.5 | Empty codestream | `testDecoderEmptyCodestreamThrows` | Error thrown |
-
-```bash
-swift test --filter J2KXSTests
-```
+> Removed in v11.0.0 — the `J2KXS` module (JPEG XS, ISO/IEC 21122) and its
+> 52-test suite were deleted as dead weight (see RELEASE_NOTES_v11.0.0.md).
 
 ---
 
@@ -1040,9 +991,7 @@ swift test --filter J2KComplianceTests
 1. **Multi-component decoding**: J2KDecoder returns only the first component for multi-component images.
 2. **Decomposition levels**: Non-tiled images with >= 5 decomposition levels on >= 256x256 images may fail with "Missing LL subband". Use <= 2 decomposition levels for >= 128x128 or enable tiling.
 3. **Metal GPU**: Metal tests require macOS with compatible GPU; tests are skipped on CI without Metal.
-4. **Vulkan GPU**: Vulkan backend falls back to CPU on platforms without Vulkan support.
-5. **JPEG XS**: Current implementation uses Haar wavelet only.
-6. **OpenJPEG interop**: Requires `opj_compress`/`opj_decompress` in PATH for interoperability tests.
+4. **OpenJPEG interop**: Requires `opj_compress`/`opj_decompress` in PATH for interoperability tests.
 
 ---
 

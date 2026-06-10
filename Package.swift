@@ -40,26 +40,17 @@ let package = Package(
             name: "J2KCodec",
             targets: ["J2KCodec"]),
         .library(
-            name: "J2KAccelerate",
-            targets: ["J2KAccelerate"]),
-        .library(
             name: "J2KFileFormat",
             targets: ["J2KFileFormat"]),
         .library(
             name: "J2KMetal",
             targets: ["J2KMetal"]),
         .library(
-            name: "J2KVulkan",
-            targets: ["J2KVulkan"]),
-        .library(
             name: "JPIP",
             targets: ["JPIP"]),
         .library(
             name: "J2K3D",
             targets: ["J2K3D"]),
-        .library(
-            name: "J2KXS",
-            targets: ["J2KXS"]),
         // v10.17.0 — DICOM-bridge helpers product. Phase 1 ships the
         // Transfer Syntax UID enum + J2KEncodingConfiguration mapping +
         // codestream sniffer + PhotometricInterpretation enum mirror.
@@ -104,9 +95,6 @@ let package = Package(
             name: "J2KCore",
             dependencies: [
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
-            ],
-            swiftSettings: [
-                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
             ]),
         // v9.4-research — custom C+NEON tier-1 HT block encoder. Plain C
         // target with caller-owned-buffer entry point. No global statics,
@@ -116,13 +104,13 @@ let package = Package(
         .target(
             name: "J2KCodecNEON",
             path: "Sources/J2KCodecNEON",
-            publicHeadersPath: "include",
-            cSettings: [
-                .unsafeFlags(
-                    ["-O3", "-fno-exceptions", "-fno-stack-protector",
-                     "-fno-math-errno", "-fstrict-aliasing"],
-                    .when(configuration: .release)),
-            ]),
+            // v11.0.0: the -O3/-fno-* unsafeFlags were removed after an
+            // interleaved warm A/B (DX -0.44 ms, MG +1.35 ms, CT +0.06 ms
+            // vs SwiftPM's default release C optimization — all inside the
+            // 3 ms gate). Any unsafeFlags in the manifest makes the whole
+            // package ineligible as a versioned SwiftPM dependency; this
+            // was the last one.
+            publicHeadersPath: "include"),
         .target(
             name: "J2KCodec",
             dependencies: [
@@ -130,13 +118,7 @@ let package = Package(
                 "J2KMetal",
                 "J2KCodecNEON",
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
-            ],
-            swiftSettings: [
-                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
             ]),
-        .target(
-            name: "J2KAccelerate",
-            dependencies: ["J2KCore", "J2KCodec"]),
         .target(
             name: "J2KFileFormat",
             dependencies: ["J2KCore", "J2KCodec"]),
@@ -172,45 +154,42 @@ let package = Package(
                 .copy("default.metallib")
             ]),
         .target(
-            name: "J2KVulkan",
-            dependencies: ["J2KCore"]),
-        .target(
             name: "JPIP",
             dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D"]),
         .target(
             name: "J2K3D",
             dependencies: ["J2KCore", "J2KCodec"]),
-        .target(
-            name: "J2KXS",
-            dependencies: ["J2KCore"]),
         // v10.17.0 — DICOM-bridge helpers. Pure additive surface,
         // ADR-004 compliant: depends only on J2KCore + J2KCodec.
         // No DICOM library dependency introduced.
         .target(
             name: "J2KDICOMHelpers",
             dependencies: ["J2KCore", "J2KCodec"]),
+        // v11.0.0 — test-app scaffolding models extracted from J2KCore.
+        // A library target (not part of the J2KTestApp executable)
+        // because J2KCLICore consumes it for `j2k testapp --headless`
+        // and J2KTestAppTests must not link an @main executable into
+        // the unified test binary (see the J2KCLICore comment below).
+        .target(
+            name: "J2KTestAppCore",
+            dependencies: ["J2KCore"],
+            path: "Sources/J2KTestAppCore"),
         .testTarget(
             name: "J2KCoreTests",
             dependencies: ["J2KCore", "J2KFileFormat"]),
         .testTarget(
             name: "J2KCodecTests",
             dependencies: [
-                "J2KCodec", "J2KFileFormat", "J2KAccelerate", "J2KMetal",
+                "J2KCodec", "J2KFileFormat", "J2KMetal",
                 "J2KCodecNEON",
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
             ]),
-        .testTarget(
-            name: "J2KAccelerateTests",
-            dependencies: ["J2KAccelerate"]),
         .testTarget(
             name: "J2KFileFormatTests",
             dependencies: ["J2KFileFormat"]),
         .testTarget(
             name: "J2KMetalTests",
             dependencies: ["J2KMetal", "J2KCodec"]),
-        .testTarget(
-            name: "J2KVulkanTests",
-            dependencies: ["J2KVulkan"]),
         .testTarget(
             name: "JPIPTests",
             dependencies: ["JPIP", "J2KCodec"]),
@@ -220,9 +199,6 @@ let package = Package(
         .testTarget(
             name: "JP3DTests",
             dependencies: ["J2K3D", "J2KCore", "JPIP"]),
-        .testTarget(
-            name: "J2KXSTests",
-            dependencies: ["J2KXS", "J2KCore"]),
         // v10.17.0 — J2KDICOMHelpers Phase 1 test target.
         .testTarget(
             name: "J2KDICOMHelpersTests",
@@ -231,14 +207,8 @@ let package = Package(
             name: "J2KComplianceTests",
             dependencies: ["J2K3D", "J2KCore"]),
         .testTarget(
-            name: "J2KInteroperabilityTests",
-            dependencies: ["J2KCore"]),
-        .testTarget(
-            name: "PerformanceTests",
-            dependencies: ["J2KCore", "J2KCodec"]),
-        .testTarget(
             name: "J2KTestAppTests",
-            dependencies: ["J2KCore"]),
+            dependencies: ["J2KTestAppCore", "J2KCore"]),
         .systemLibrary(
             name: "CZlib",
             path: "Sources/CZlib"),
@@ -250,16 +220,13 @@ let package = Package(
         // when every XCTest suite passes.
         .target(
             name: "J2KCLICore",
-            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib", "J2KDaemonClient"],
+            dependencies: ["J2KCore", "J2KCodec", "J2KFileFormat", "J2K3D", "JPIP", "CZlib", "J2KDaemonClient", "J2KTestAppCore"],
             path: "Sources/J2KCLICore"),
         // Thin `@main` wrapper producing the `j2k` executable.
         .executableTarget(
             name: "J2KCLI",
             dependencies: ["J2KCLICore"],
-            path: "Sources/J2KCLI",
-            swiftSettings: [
-                .unsafeFlags(["-parse-as-library"])
-            ]),
+            path: "Sources/J2KCLI"),
         // v8 Phase 6.3 — XPC daemon protocol (macOS-only at the
         // type level via #if os(macOS)). Shared between the
         // daemon executable, the daemon-side service, and the
@@ -289,10 +256,7 @@ let package = Package(
         .executableTarget(
             name: "J2KDaemon",
             dependencies: ["J2KDaemonProtocol", "J2KDaemonCore", "J2KCodec"],
-            path: "Sources/J2KDaemon",
-            swiftSettings: [
-                .unsafeFlags(["-parse-as-library"])
-            ]),
+            path: "Sources/J2KDaemon"),
         .testTarget(
             name: "J2KDaemonTests",
             dependencies: ["J2KDaemonProtocol", "J2KDaemonCore"],
@@ -303,10 +267,7 @@ let package = Package(
             path: "Tests/J2KDaemonClientTests"),
         .executableTarget(
             name: "J2KTestApp",
-            dependencies: ["J2KCore", "J2KCodec", "J2K3D"],
-            path: "Sources/J2KTestApp",
-            swiftSettings: [
-                .unsafeFlags(["-parse-as-library"])
-            ]),
+            dependencies: ["J2KCore", "J2KCodec", "J2K3D", "J2KTestAppCore"],
+            path: "Sources/J2KTestApp"),
     ]
 )

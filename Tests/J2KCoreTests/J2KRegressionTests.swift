@@ -498,28 +498,6 @@ final class J2KRegressionTests: XCTestCase {
         XCTAssertNoThrow(try image.validate())
     }
 
-    // MARK: - Memory Pool Regression
-
-    func testMemoryPoolAcquireAndRelease() async throws {
-        let pool = J2KMemoryPool()
-        let buffer = await pool.acquire(capacity: 1024)
-        XCTAssertGreaterThanOrEqual(buffer.capacity, 1024)
-        await pool.release(buffer)
-    }
-
-    func testMemoryPoolMultipleAcquireAndRelease() async throws {
-        let pool = J2KMemoryPool()
-        var buffers: [J2KBuffer] = []
-        for _ in 0..<20 {
-            let buffer = await pool.acquire(capacity: 512)
-            buffers.append(buffer)
-        }
-        XCTAssertEqual(buffers.count, 20)
-        for buffer in buffers {
-            await pool.release(buffer)
-        }
-    }
-
     // MARK: - Memory Tracker Regression
 
     func testMemoryTrackerInitialUsageIsZero() async throws {

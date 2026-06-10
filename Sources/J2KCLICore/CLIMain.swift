@@ -18,7 +18,7 @@ import J2KFileFormat
 /// swift-testing pass executes the test binary directly; a linked-in
 /// executable entry point hijacks that pass, prints the CLI usage text,
 /// and exits 1 even when every test passes. The `j2k` executable is a
-/// thin `@main` wrapper in `Sources/J2KCLI/main.swift` that calls
+/// thin `@main` wrapper in `Sources/J2KCLI/Entry.swift` that calls
 /// `J2KCLI.run()`.
 public struct J2KCLI {
     public static func run() async {

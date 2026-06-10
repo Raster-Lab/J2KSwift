@@ -168,19 +168,14 @@ progression order, and quality layers.
 J2KSwift supports macOS 15+, iOS 17+, tvOS 17+, watchOS 10+, visionOS 1+,
 Linux, and Windows.
 
-- **Apple platforms** — the ``J2KAccelerate`` module uses the Accelerate
-  framework (vDSP, vImage) for faster transforms. ``J2KMetal`` adds GPU
-  acceleration on devices with Metal support.
-- **Linux / Windows** — ``J2KVulkan`` provides GPU acceleration where a
-  Vulkan 1.2+ driver is available. The CPU-only path is always available as
-  a fallback.
+- **Apple platforms** — ``J2KMetal`` adds GPU acceleration on devices with
+  Metal support. The CPU-only path is always available as a fallback.
 - **Concurrency** — all types conform to ``Sendable`` and work with Swift 6
   strict concurrency. Network services (``JPIPClient``, ``JPIPServer``) are
   actors.
 
 > Important: The ``J2KMetal`` module is only compiled on platforms where Metal
-> is available (`#if canImport(Metal)`). Likewise, ``J2KVulkan`` requires the
-> Vulkan headers and loader at build time.
+> is available (`#if canImport(Metal)`).
 
 ## Next Steps
 

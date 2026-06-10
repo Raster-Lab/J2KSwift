@@ -149,9 +149,7 @@ final class J2KBenchmarkTests: XCTestCase {
 
         let result = await benchmark.measureAsync(iterations: 5) {
             // Simulate async work
-            let pool = J2KMemoryPool()
-            let buffer = await pool.acquire(capacity: 1024)
-            await pool.release(buffer)
+            try? await Task.sleep(nanoseconds: 1_000)
         }
 
         XCTAssertEqual(result.iterations, 5)
@@ -263,18 +261,5 @@ final class J2KBenchmarkTests: XCTestCase {
         }
 
         XCTAssertEqual(result.iterations, 1000)
-    }
-
-    func testMemoryPoolPerformance() async throws {
-        let benchmark = J2KBenchmark(name: "MemoryPool Acquire/Release")
-        let pool = J2KMemoryPool()
-
-        let result = await benchmark.measureAsync(iterations: 100) {
-            let buffer = await pool.acquire(capacity: 4096)
-            await pool.release(buffer)
-        }
-
-        XCTAssertEqual(result.iterations, 100)
-        XCTAssertGreaterThan(result.operationsPerSecond, 0)
     }
 }

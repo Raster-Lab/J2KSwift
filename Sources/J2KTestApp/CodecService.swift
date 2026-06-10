@@ -12,6 +12,7 @@
 import Foundation
 import AppKit
 import J2KCore
+import J2KTestAppCore
 import J2KCodec
 
 // MARK: - Codec Service

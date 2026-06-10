@@ -45,9 +45,6 @@ swift package --disable-sandbox preview-documentation --target J2KCodec
 # J2KFileFormat (file I/O)
 swift package --disable-sandbox preview-documentation --target J2KFileFormat
 
-# J2KAccelerate (hardware acceleration)
-swift package --disable-sandbox preview-documentation --target J2KAccelerate
-
 # JPIP (streaming protocol)
 swift package --disable-sandbox preview-documentation --target JPIP
 ```
@@ -200,7 +197,6 @@ J2KCore provides the foundational types and infrastructure for J2KSwift. It incl
 ### Memory Management
 - ``J2KBuffer``
 - ``J2KImageBuffer``
-- ``J2KMemoryPool``
 
 ### I/O
 - ``J2KBitReader``

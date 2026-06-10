@@ -126,6 +126,9 @@ benchmark_results/
 *.benchmark
 *.profiling
 profile_results*/
+# v11.0.0: bench captures live under Documentation/Benchmarks/data/
+results/
+/benchmark-results-*.json
 
 # Local real-world medical datasets
 LocalDatasets/

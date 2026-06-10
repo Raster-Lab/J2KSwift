@@ -34,8 +34,8 @@ only link the capabilities they require.
 
 - **Correctness** — bit-exact conformance with the ISO/IEC 15444 test vectors.
 - **Thread safety** — Swift 6 strict concurrency throughout; no data races.
-- **Performance** — hardware acceleration on every supported platform via SIMD,
-  Apple Accelerate, Metal, and Vulkan compute.
+- **Performance** — hardware acceleration via SIMD, Apple Accelerate, and Metal
+  compute (Apple-Silicon-first since v8.0.0).
 - **Portability** — identical API surface on macOS, iOS, visionOS, Linux, and Windows;
   platform-specific acceleration is selected automatically at compile time and at runtime.
 - **Composability** — modules may be mixed freely; none carry hidden transitive
@@ -51,27 +51,27 @@ dependent to dependency (i.e. `A → B` means "A depends on B").
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Applications / SPM consumers                 │
-└──────┬──────────┬──────────┬──────────┬──────────┬──────────┬───────┘
-       │          │          │          │          │          │
-       ▼          ▼          ▼          ▼          ▼          ▼
-  J2KCodec   J2KMetal   J2KVulkan  J2KFileFormat  JPIP     J2K3D
-       │          │          │          │          │          │
-       │          └──────────┘          │          │          │
-       │               │                │          │          │
-       ▼               ▼                ▼          ▼          ▼
-  J2KAccelerate ◄──────────────── J2KCore (foundation) ──────┘
+└──────┬──────────┬──────────────┬──────────────┬──────────┬──────────┘
+       │          │              │              │          │
+       ▼          ▼              ▼              ▼          ▼
+  J2KCodec    J2KMetal    J2KFileFormat       JPIP       J2K3D
+       │          │              │              │          │
+       └──────────┴──────┬───────┴──────────────┴──────────┘
+                         ▼
+              J2KCore (foundation)
 ```
+
+> The `J2KAccelerate`, `J2KVulkan`, and `J2KXS` modules were Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md).
+> NEON and Accelerate SIMD paths now live inside `J2KCodec` / `J2KCodecNEON`.
 
 ### Layered view
 
 ```
 J2KCore  (foundation – no external dependencies)
-  ├─► J2KCodec          (encoding / decoding pipelines)
-  │     ├─► J2KAccelerate    (vDSP / vImage / SIMD)
-  │     └─► J2KFileFormat    (JP2, JPX, MJ2 box I/O)
+  ├─► J2KCodec          (encoding / decoding pipelines; vDSP / vImage / NEON SIMD)
+  │     └─► J2KFileFormat    (JP2, JPX box I/O)
   │           └─► JPIP       (interactive streaming protocol)
   ├─► J2KMetal           (Metal GPU acceleration — Apple platforms only)
-  ├─► J2KVulkan          (Vulkan GPU acceleration — Linux / Windows)
   └─► J2K3D              (JP3D / volumetric JPEG 2000, Part 10)
 ```
 
@@ -81,8 +81,6 @@ J2KCore  (foundation – no external dependencies)
 |------|-----------|
 | No module may depend on its sibling | Prevents circular graphs |
 | All modules depend on `J2KCore` | Shared types live in one place |
-| `J2KAccelerate` depends only on `J2KCore` | Keeps the SIMD layer portable |
-| `J2KMetal` and `J2KVulkan` are parallel alternatives | Runtime dispatch via `J2KGPUBackendSelector` |
 | `J2KFileFormat` does not depend on codec stages | Format I/O is independent of transformation pipelines |
 
 ---
@@ -125,21 +123,12 @@ and Foundation.
 | `J2KQuantizer` | struct | Scalar and trellis quantisation |
 | `J2KRateControl` | struct | PCRD-opt rate–distortion optimisation |
 
-### J2KAccelerate
+### J2KAccelerate (Removed in v11.0.0)
 
-**Role**: Hardware-accelerated variants of the codec operations.
-
-Provides drop-in replacements for `J2KDWT2D`, `J2KColorTransform`, and
-`J2KQuantizer` using:
-
-- **Apple Accelerate** (`vDSP`, `vImage`, `BNNS`) — available on all Apple
-  platforms.
-- **NEON SIMD** — used automatically on ARM64 (Apple Silicon and Linux/ARM).
-- **AVX / AVX-512 SIMD** — used automatically on x86-64 (macOS Intel, Linux, Windows).
-
-`J2KAccelerate` is compiled unconditionally; platform-specific paths are
-selected by `#if arch(arm64)` / `#if arch(x86_64)` guards and by
-`#if canImport(Accelerate)` for the vDSP/vImage APIs.
+> Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md). The vDSP /
+> vImage and NEON SIMD acceleration paths live inside `J2KCodec` and
+> `J2KCodecNEON`; x86 AVX paths were deleted with the Apple-Silicon-first
+> narrowing.
 
 ### J2KFileFormat
 
@@ -147,7 +136,7 @@ selected by `#if arch(arm64)` / `#if arch(x86_64)` guards and by
 
 | Type | Purpose |
 |------|---------|
-| `J2KFileReader` | Streaming parser for JP2, J2K, JPX, JPM, and MJ2 files |
+| `J2KFileReader` | Streaming parser for JP2, J2K, JPX, and JPM files |
 | `J2KFileWriter` | Constructs ISO base media file format box trees and writes them |
 | `J2KFormatDetector` | Identifies file format from magic bytes / file extension |
 | `J2KBoxModel` | Typed representation of JP2 box hierarchy |
@@ -181,22 +170,14 @@ All I/O is `async`; network operations use `URLSession` on Apple platforms and
 | `J2KMetalContext` | Device selection and command queue management |
 
 Compiled only when `canImport(Metal)` is true. The module exposes the same
-logical interface as `J2KAccelerate` so that `J2KGPUBackendSelector` can
+logical interface as the CPU codec stages so that GPU/CPU routing can
 dispatch transparently.
 
-### J2KVulkan
+### J2KVulkan (Removed in v11.0.0)
 
-**Role**: GPU-accelerated codec stages for Linux and Windows via Vulkan 1.2+.
-
-| Type | Purpose |
-|------|---------|
-| `J2KVulkanDWT` | DWT / IDWT via SPIR-V compute shaders |
-| `J2KVulkanQuantizer` | Quantisation via SPIR-V compute shaders |
-| `J2KVulkanColourTransform` | ICT / RCT via SPIR-V compute shaders |
-| `J2KVulkanContext` | Instance, device, and queue management |
-
-Compiled only on Linux and Windows (no Vulkan on Apple platforms; Metal is used
-instead).
+> Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md). J2KSwift is
+> Apple-Silicon-first since v8.0.0; Metal is the only GPU backend. See
+> ADR-003 (superseded).
 
 ### J2K3D
 
@@ -237,8 +218,6 @@ The following actors manage mutable shared state across the library:
 | `J2KBenchmarkRunner` | J2KCore | Collects and reports benchmark results |
 | `J2KPipelineProfiler` | J2KCore | Pipeline stage timing and memory profiling |
 | `J2KUnifiedMemoryManager` | J2KCore | Apple Silicon unified memory allocation |
-| `J2KMemoryPool` | J2KCore | Buffer pooling and reuse |
-| `J2KThreadPool` | J2KCore | Parallel work distribution |
 | `J2KThermalStateMonitor` | J2KCore | Thermal state monitoring |
 | `J2KAsyncFileIO` | J2KCore | Asynchronous file I/O |
 | `JPIPClient` | JPIP | HTTP/WebSocket progressive download |
@@ -254,8 +233,6 @@ The following types use `@unchecked Sendable` with explicit justification:
 |------|---------------|
 | `J2KBuffer.Storage` | Private CoW storage; thread safety guaranteed by owning struct |
 | `J2KImageBuffer.Storage` | Private CoW storage; thread safety guaranteed by owning struct |
-| `J2KSharedBuffer` | Zero-copy slice; immutable after creation |
-| `J2KArenaAllocator` | Internal arena; synchronous pointer return required |
 | `J2KMemoryMappedFile` | File descriptor lifecycle; Darwin-only |
 
 ### Structured Concurrency Integration
@@ -287,7 +264,7 @@ where `try Task.checkCancellation()` is called.
 │  let encoder = J2KEncoder()        ← value type; freely Sendable      │
 │  let data = try await encoder.encode(image)  ← async API              │
 │                                                                        │
-│  ┌─────────── J2KThreadPool (actor) ──────────────────────────────┐   │
+│  ┌─────────── withThrowingTaskGroup (structured concurrency) ─────┐   │
 │  │  Tile 0 task ──► J2KDWT2D (struct) ──► J2KQuantizer (struct)   │   │
 │  │  Tile 1 task ──► J2KDWT2D (struct) ──► J2KQuantizer (struct)   │   │
 │  │  Tile N task ──► J2KDWT2D (struct) ──► J2KQuantizer (struct)   │   │
@@ -323,25 +300,13 @@ Key operations vectorised with NEON:
 
 #### x86 AVX / AVX-512 (x86-64)
 
-Compiled when `arch(x86_64)` is true. Used on:
-- Intel and AMD Macs
-- Linux/x86-64 (servers, workstations)
-- Windows/x86-64
-
-Key operations vectorised with AVX2:
-
-| Operation | SIMD width | Throughput gain (vs scalar) |
-|-----------|------------|-----------------------------|
-| 9/7 lifting steps | SIMD8<Float> | ≈ 6.2× |
-| 5/3 lifting steps | SIMD16<Int16> | ≈ 7.8× |
-| ICT colour transform | SIMD8<Float> | ≈ 5.9× |
-
-AVX-512 paths are enabled at runtime when `J2KPlatform.simdLevel` reports
-`.avx512`, providing an additional ≈ 1.5× gain over AVX2.
+> Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md). The x86
+> SSE/AVX SIMD paths were deleted as part of the Apple-Silicon-first
+> narrowing (v8.0.0); x86-64 builds use the scalar fallbacks.
 
 #### Apple Accelerate Framework
 
-When `canImport(Accelerate)` is true, `J2KAccelerate` uses:
+When `canImport(Accelerate)` is true, the codec uses:
 
 - **vDSP** — FFT-based convolution for large kernel operations; vectorised
   floating-point arithmetic for quantisation scaling.
@@ -360,12 +325,12 @@ backend:
 ```
 J2KGPUBackendSelector
   ├─ canImport(Metal) && MTLDevice.available  →  J2KMetal
-  ├─ Vulkan 1.2 device detected              →  J2KVulkan
-  └─ (fallback)                              →  J2KAccelerate (CPU + SIMD)
+  └─ (fallback)                               →  CPU + SIMD (J2KCodec)
 ```
 
-Both GPU backends implement the same `J2KGPUBackend` protocol, so the codec
-pipeline is unaware of which backend is active.
+The Metal backend implements the `J2KGPUBackend` protocol, so the codec
+pipeline is unaware of which backend is active. (The Vulkan backend was
+removed in v11.0.0; Metal is the only GPU backend.)
 
 #### Metal (Apple Platforms)
 
@@ -391,22 +356,13 @@ Entropy Coding (CPU — EBCOT is inherently sequential per bit-plane)
 Performance target: ≥ 500 MP/s (megapixels per second) for lossy encoding
 on M2 Pro with 4K images.
 
-#### Vulkan (Linux / Windows)
-
-`J2KVulkan` loads SPIR-V compute shaders at startup and dispatches via Vulkan
-compute queues. The shader pipeline mirrors the Metal pipeline.
-
-Performance target: ≥ 300 MP/s on an NVIDIA RTX 3070.
-
 ### Memory Architecture
 
 | Technique | Where used | Benefit |
 |-----------|-----------|---------|
 | Copy-on-write buffers | `J2KBuffer`, `J2KImage` | Free copies until mutation |
 | Memory-mapped files | `J2KMemoryMappedFile` | Zero-copy file reading on Darwin |
-| Arena allocation | `J2KArenaAllocator` | Eliminates per-tile heap allocations in tight loops |
-| Buffer pooling | `J2KMemoryPool` | Reuses tile-sized allocations across frames |
-| Zero-copy slices | `J2KBufferSlice` | Subrange views without copying |
+| GPU buffer pooling | `J2KMetalBufferPool` | Reuses Metal buffers across dispatches |
 | Unified memory (Apple Silicon) | `J2KUnifiedMemoryManager` | Shared CPU/GPU memory; eliminates blit operations |
 
 ---
@@ -442,7 +398,6 @@ calls return a cached value; detection is never repeated.
 | `simdLevel` | `J2KSIMDLevel` | Highest available SIMD ISA (`.neon`, `.avx2`, `.avx512`, …) |
 | `hasUnifiedMemory` | Bool | True on Apple Silicon |
 | `hasMetalGPU` | Bool | True when a Metal-capable device is available |
-| `hasVulkanGPU` | Bool | True when a Vulkan 1.2-capable device is detected |
 | `physicalMemory` | UInt64 | Total physical RAM in bytes |
 | `thermalState` | `ProcessInfo.ThermalState` | Current thermal state |
 
@@ -466,24 +421,18 @@ each platform:
     import Metal
     let device = MTLCreateSystemDefaultDevice()
 #endif
-
-#if os(Linux) || os(Windows)
-    // Vulkan GPU path
-    let instance = VulkanInstance()
-#endif
 ```
 
 ### Platform Support Matrix
 
-| Platform | Metal | Vulkan | Accelerate | NEON | AVX |
-|----------|-------|--------|------------|------|-----|
-| macOS 14+ (Apple Silicon) | ✅ | ❌ | ✅ | ✅ | ❌ |
-| macOS 14+ (Intel) | ✅ | ❌ | ✅ | ❌ | ✅ |
-| iOS 17+ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| visionOS 1+ | ✅ | ❌ | ✅ | ✅ | ❌ |
-| Linux/ARM64 | ❌ | ✅ | ❌ | ✅ | ❌ |
-| Linux/x86-64 | ❌ | ✅ | ❌ | ❌ | ✅ |
-| Windows/x86-64 | ❌ | ✅ | ❌ | ❌ | ✅ |
+| Platform | Metal | Accelerate | NEON |
+|----------|-------|------------|------|
+| macOS 15+ (Apple Silicon) | ✅ | ✅ | ✅ |
+| iOS 18+ | ✅ | ✅ | ✅ |
+| visionOS 1+ | ✅ | ✅ | ✅ |
+| Linux/ARM64 | ❌ | ❌ | ✅ |
+| Linux/x86-64 | ❌ | ❌ | ❌ |
+| Windows/x86-64 | ❌ | ❌ | ❌ |
 
 ---
 
@@ -551,7 +500,7 @@ Decision Records in `Documentation/ADR/`:
 |-----|----------|
 | [ADR-001](ADR/ADR-001-swift6-strict-concurrency.md) | Use Swift 6 strict concurrency |
 | [ADR-002](ADR/ADR-002-value-types-cow.md) | Value types with copy-on-write storage |
-| [ADR-003](ADR/ADR-003-modular-gpu-backends.md) | Modular GPU backends (Metal + Vulkan) |
+| [ADR-003](ADR/ADR-003-modular-gpu-backends.md) | Modular GPU backends (Metal + Vulkan) — Superseded (Apple-only since v8.0.0; J2KVulkan module Removed in v11.0.0) |
 | [ADR-004](ADR/ADR-004-no-dicom-dependency.md) | No DICOM library dependencies |
 | [ADR-005](ADR/ADR-005-british-english.md) | British English in documentation and comments |
 

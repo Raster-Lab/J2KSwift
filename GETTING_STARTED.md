@@ -58,8 +58,7 @@ Then add the modules you need to your target:
 ### Available Modules
 
 - **J2KCore**: Core types and utilities (always required)
-- **J2KCodec**: Encoding and decoding functionality
-- **J2KAccelerate**: Hardware acceleration (automatically falls back on unsupported platforms)
+- **J2KCodec**: Encoding and decoding functionality (includes ARM Neon and Accelerate hardware acceleration)
 - **J2KFileFormat**: File format support (JP2, J2K, JPX, JPM)
 - **JPIP**: Network streaming protocol
 

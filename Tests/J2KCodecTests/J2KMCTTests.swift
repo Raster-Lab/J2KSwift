@@ -12,10 +12,6 @@ import XCTest
 @testable import J2KCodec
 @testable import J2KCore
 
-#if canImport(J2KAccelerate)
-@testable import J2KAccelerate
-#endif
-
 final class J2KMCTTests: XCTestCase {
     // MARK: - Matrix Creation and Validation Tests
 
@@ -462,167 +458,6 @@ final class J2KMCTTests: XCTestCase {
         XCTAssertTrue(matrix.validateReconstructibility())
     }
 
-    // MARK: - Accelerated MCT Tests
-
-    #if canImport(J2KAccelerate)
-
-    func testAcceleratedAvailability() {
-        #if canImport(Accelerate)
-        XCTAssertTrue(J2KAcceleratedMCT.isAvailable)
-        #else
-        XCTAssertFalse(J2KAcceleratedMCT.isAvailable)
-        #endif
-    }
-
-    #if canImport(Accelerate)
-
-    func testAcceleratedForwardTransform() throws {
-        let accelerated = J2KAcceleratedMCT()
-
-        let matrix = try J2KMCTMatrix(
-            size: 3,
-            coefficients: [
-                1.0, 0.0, 0.0,
-                0.0, 1.0, 0.0,
-                0.0, 0.0, 1.0
-            ]
-        )
-
-        let input: [[Double]] = [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0]
-        ]
-
-        let output = try accelerated.forwardTransform(components: input, matrix: matrix)
-
-        XCTAssertEqual(output.count, 3)
-        for i in 0..<3 {
-            XCTAssertEqual(output[i], input[i])
-        }
-    }
-
-    func testAccelerated3x3FastPath() throws {
-        let accelerated = J2KAcceleratedMCT()
-
-        let input: [[Double]] = [
-            [255.0, 128.0, 64.0],
-            [0.0, 128.0, 255.0],
-            [128.0, 64.0, 192.0]
-        ]
-
-        let output = try accelerated.forwardTransform3x3(
-            components: input,
-            matrix: J2KMCTMatrix.rgbToYCbCr
-        )
-
-        XCTAssertEqual(output.count, 3)
-        XCTAssertEqual(output[0].count, 3)
-    }
-
-    func testAccelerated4x4FastPath() throws {
-        let accelerated = J2KAcceleratedMCT()
-
-        let matrix = J2KMCTMatrix.identity4
-
-        let input: [[Double]] = [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-            [10.0, 11.0, 12.0]
-        ]
-
-        let output = try accelerated.forwardTransform4x4(components: input, matrix: matrix)
-
-        XCTAssertEqual(output.count, 4)
-        for i in 0..<4 {
-            XCTAssertEqual(output[i], input[i])
-        }
-    }
-
-    func testAcceleratedIntegerTransform() throws {
-        throw XCTSkip("Known CI failure: expected values mismatch")
-        let accelerated = J2KAcceleratedMCT()
-
-        let matrix = try J2KMCTMatrix(
-            size: 2,
-            coefficients: [1.0, 1.0, 1.0, -1.0],
-            precision: .integer
-        )
-
-        let input: [[Int32]] = [
-            [10, 20],
-            [5, 15]
-        ]
-
-        let output = try accelerated.forwardTransformInteger(components: input, matrix: matrix)
-
-        XCTAssertEqual(output[0][0], 15)
-        XCTAssertEqual(output[1][0], 5)
-    }
-
-    func testAcceleratedRoundTrip() throws {
-        let accelerated = J2KAcceleratedMCT()
-        let mct = J2KMCT()
-
-        let matrix = J2KMCTMatrix.rgbToYCbCr
-        let inverse = J2KMCTMatrix.yCbCrToRGB
-
-        let input: [[Double]] = [
-            Array(repeating: 128.0, count: 1000),
-            Array(repeating: 64.0, count: 1000),
-            Array(repeating: 192.0, count: 1000)
-        ]
-
-        // Accelerated path
-        let transformed = try accelerated.forwardTransform(components: input, matrix: matrix)
-        let reconstructed = try accelerated.forwardTransform(components: transformed, matrix: inverse)
-
-        // Check accuracy
-        for i in 0..<3 {
-            for j in 0..<1000 {
-                XCTAssertEqual(reconstructed[i][j], input[i][j], accuracy: 1e-6)
-            }
-        }
-    }
-
-    func testAcceleratedVsScalarConsistency() throws {
-        let accelerated = J2KAcceleratedMCT()
-        let scalar = J2KMCT()
-
-        let matrix = J2KMCTMatrix.averaging3
-
-        let input: [[Double]] = [
-            [100.0, 150.0, 200.0],
-            [50.0, 75.0, 125.0],
-            [25.0, 50.0, 100.0]
-        ]
-
-        let accelOutput = try accelerated.forwardTransform(components: input, matrix: matrix)
-        let scalarOutput = try scalar.forwardTransform(components: input, matrix: matrix)
-
-        // Results should be very close
-        for i in 0..<3 {
-            for j in 0..<3 {
-                XCTAssertEqual(accelOutput[i][j], scalarOutput[i][j], accuracy: 1e-6)
-            }
-        }
-    }
-
-    func testOptimalBatchSize() {
-        let batch1 = J2KAcceleratedMCT.optimalBatchSize(sampleCount: 100, componentCount: 3)
-        XCTAssertGreaterThan(batch1, 0)
-        XCTAssertLessThanOrEqual(batch1, 100)
-
-        let batch2 = J2KAcceleratedMCT.optimalBatchSize(sampleCount: 100000, componentCount: 3)
-        XCTAssertGreaterThan(batch2, 256)
-        XCTAssertLessThanOrEqual(batch2, 2048)
-    }
-
-    #endif // canImport(Accelerate)
-
-    #endif // canImport(J2KAccelerate)
-
     // MARK: - Performance Tests
 
     func testPerformanceScalarTransform() throws {
@@ -640,26 +475,6 @@ final class J2KMCTTests: XCTestCase {
             _ = try? mct.forwardTransform(components: input, matrix: matrix)
         }
     }
-
-    #if canImport(J2KAccelerate) && canImport(Accelerate)
-
-    func testPerformanceAcceleratedTransform() throws {
-        let accelerated = J2KAcceleratedMCT()
-        let matrix = J2KMCTMatrix.rgbToYCbCr
-
-        let sampleCount = 1024 * 1024
-        let input: [[Double]] = [
-            Array(repeating: 128.0, count: sampleCount),
-            Array(repeating: 64.0, count: sampleCount),
-            Array(repeating: 192.0, count: sampleCount)
-        ]
-
-        measure {
-            _ = try? accelerated.forwardTransform(components: input, matrix: matrix)
-        }
-    }
-
-    #endif
 
     // MARK: - MCT Marker Segment Tests
 

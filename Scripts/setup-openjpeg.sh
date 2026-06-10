@@ -200,8 +200,8 @@ log " opj_compress:   $OPJ_COMPRESS"
 log " opj_decompress: $OPJ_DECOMPRESS"
 log "════════════════════════════════════════════"
 log ""
-log "To run interoperability tests:"
-log "  swift test --filter J2KInteroperabilityTests"
+log "To run cross-codec interoperability tests:"
+log "  swift test --filter J2KCodecTests"
 log ""
 
 exit 0

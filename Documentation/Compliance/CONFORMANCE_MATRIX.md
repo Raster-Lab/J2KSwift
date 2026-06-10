@@ -142,16 +142,16 @@ The conformance runner can be invoked via:
 
 ```bash
 # Run all conformance tests
-./Scripts/run-conformance.sh
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0)
 
 # Run Part 1 only
-./Scripts/run-conformance.sh --part 1
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0) --part 1
 
 # Run with verbose output
-./Scripts/run-conformance.sh --verbose
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0) --verbose
 
 # Generate a markdown report
-./Scripts/run-conformance.sh --report
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0) --report
 ```
 
 Or in Swift:

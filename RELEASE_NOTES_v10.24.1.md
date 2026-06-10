@@ -47,7 +47,7 @@ bit)**, silently corrupting magnitude and sign and dropping the top bitplane.
 
 Instrumentation on the minimal reproducer: `comp=1 sub=LL res=0 K_max=8
 window=256 maxAbs=259 → OVERFLOW`. Minimal reproducer: an 8×8 RGB tile
-(`results/htj2k_bug_repro/`).
+(`Documentation/Benchmarks/data/htj2k_bug_repro/`).
 
 **Fix:** a centralized `htConformantReversibleGain(subband:rctActive:)` sizes
 the window to match OpenJPH's proven-sufficient reversible `K_max`

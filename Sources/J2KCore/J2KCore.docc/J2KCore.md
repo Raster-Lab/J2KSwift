@@ -56,22 +56,19 @@ Use J2KCore when you need to:
 - ``J2KBenchmarkRunner``
 - ``J2KPipelineProfiler``
 - ``J2KPerformanceOptimizer``
-- ``J2KReferenceBenchmark``
 
 ### Concurrency
 
-- ``J2KGCDDispatcher``
-- ``J2KActorContentionAnalyzer``
 - ``J2KPowerEfficiencyManager``
 - ``J2KThermalStateMonitor``
 
 ### Conformance Validation
 
 - ``J2KConformanceValidator``
-- ``J2KPart1ConformanceTestSuite``
-- ``J2KPart2ConformanceValidator``
-- ``J2KConformanceMatrix``
 - ``HTJ2KConformanceTestHarness``
+- ``J2KHTInteroperabilityValidator``
+- ``J2KMarkerSegmentValidator``
+- ``J2KCodestreamSyntaxValidator``
 
 ### Platform Utilities
 

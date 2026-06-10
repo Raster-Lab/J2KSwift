@@ -2433,7 +2433,7 @@ end-to-end round-trip test.
 
 Canonical comparison table. Numbers below are **medians of 3 independent runs** in
 release mode, n=5 timing samples per fixture per API per run, HT-conformant lossy 9/7
-@ 2 bpp. Raw run logs in [`benchmarks/`](benchmarks/).
+@ 2 bpp. Raw run logs in [`Documentation/Benchmarks/data/m2-cli-captures/`](../Benchmarks/data/m2-cli-captures/).
 
 ### Decode (warm session, ms)
 
@@ -2495,13 +2495,13 @@ in the same M4 run (CPU/GPU column from the encode table).
 ```bash
 swift test -c release --filter "J2KMedicalCorpus" 2>&1 \
   | grep -E "^(=== |Processor:|Image:|Synthetic|Skipped|\| |Per-fixture|Cold session|preWarm|Warm session|Cold-start|Total cost)" \
-  > benchmarks/M4_run1.txt
+  > Documentation/Benchmarks/data/m2-cli-captures/M4_run1.txt
 ```
 
 Repeat 3× (`M4_run1.txt`, `M4_run2.txt`, `M4_run3.txt`); take per-fixture medians; fill
 in the `Apple M4` column above. The benchmark auto-tags with `Processor:` from
 `sysctlbyname("machdep.cpu.brand_string", …)` so each file is self-identifying. See
-[`benchmarks/README.md`](benchmarks/README.md) for full notes.
+[`Documentation/Benchmarks/data/m2-cli-captures/README.md`](../Benchmarks/data/m2-cli-captures/README.md) for full notes.
 
 ### Variance characterisation (M2)
 

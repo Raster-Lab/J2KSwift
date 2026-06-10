@@ -1,3 +1,5 @@
+> **Removed in v11.0.0** — the J2KFileFormat MJ2 container stack (MJ2Creator/MJ2Player/MJ2Extractor) documented below was removed as dead code; this guide is retained as a historical record. The J2KCodec/J2KMetal MJ2 video-encoding pieces it benchmarks remain.
+
 # Motion JPEG 2000 Performance Guide
 
 This document provides comprehensive guidance on optimizing Motion JPEG 2000 (MJ2) encoding, decoding, and playback performance in J2KSwift.

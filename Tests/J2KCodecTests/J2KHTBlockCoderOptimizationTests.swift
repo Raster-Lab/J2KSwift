@@ -13,55 +13,6 @@ import XCTest
 import J2KCore
 
 final class J2KHTBlockCoderOptimizationTests: XCTestCase {
-    // MARK: - Pooled Encoder Tests
-
-    func testPooledEncoderBasicFunctionality() async throws {
-        let width = 32
-        let height = 32
-        let coefficients = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
-
-        let encoder = HTBlockEncoderPooled(width: width, height: height, subband: .hh)
-        let encoded = try await encoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
-
-        XCTAssertEqual(encoded.width, width)
-        XCTAssertEqual(encoded.height, height)
-        XCTAssertEqual(encoded.passType, .htCleanup)
-        XCTAssertGreaterThan(encoded.codedData.count, 0)
-    }
-
-    func testPooledEncoderMatchesStandardEncoder() async throws {
-        let width = 32
-        let height = 32
-        let coefficients = (0..<(width * height)).map { _ in Int.random(in: -50...50) }
-
-        // Standard encoder
-        let standardEncoder = HTBlockEncoder(width: width, height: height, subband: .hh)
-        let standardEncoded = try standardEncoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
-
-        // Pooled encoder
-        let pooledEncoder = HTBlockEncoderPooled(width: width, height: height, subband: .hh)
-        let pooledEncoded = try await pooledEncoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
-
-        // Results should be identical
-        XCTAssertEqual(standardEncoded.melLength, pooledEncoded.melLength)
-        XCTAssertEqual(standardEncoded.vlcLength, pooledEncoded.vlcLength)
-        XCTAssertEqual(standardEncoded.magsgnLength, pooledEncoded.magsgnLength)
-        XCTAssertEqual(standardEncoded.codedData, pooledEncoded.codedData)
-    }
-
-    func testPooledEncoderDifferentBlockSizes() async throws {
-        let blockSizes = [(16, 16), (32, 32), (64, 64)]
-
-        for (width, height) in blockSizes {
-            let coefficients = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
-            let encoder = HTBlockEncoderPooled(width: width, height: height, subband: .hh)
-
-            let encoded = try await encoder.encodeCleanup(coefficients: coefficients, bitPlane: 7)
-
-            XCTAssertGreaterThan(encoded.codedData.count, 0, "Failed for \(width)×\(height)")
-        }
-    }
-
     // MARK: - Optimized Encoder Tests
 
     func testOptimizedEncoderSmallBlocks() throws {
@@ -237,69 +188,5 @@ final class J2KHTBlockCoderOptimizationTests: XCTestCase {
         )
 
         XCTAssertNil(result, "Should not encode when not needed")
-    }
-
-    // MARK: - Pool Configuration Tests
-
-    func testPoolConfigPrewarm32x32() async throws {
-        let config = HTBlockCoderPoolConfig.standard32x32
-        await config.prewarmPool()
-
-        // Verify pool has cached buffers
-        let pool = J2KBufferPool.shared
-        let stats = await pool.statistics()
-
-        // Should have some cached buffers for the estimated size
-        let estimatedSize = (32 * 32) / 2
-        XCTAssertNotNil(stats.uint8[estimatedSize], "Pool should have buffers cached")
-    }
-
-    func testPoolConfigPrewarm64x64() async throws {
-        let config = HTBlockCoderPoolConfig.standard64x64
-        await config.prewarmPool()
-
-        let pool = J2KBufferPool.shared
-        let stats = await pool.statistics()
-
-        let estimatedSize = (64 * 64) / 2
-        XCTAssertNotNil(stats.uint8[estimatedSize], "Pool should have buffers cached")
-    }
-
-    // MARK: - Performance Comparison Tests
-
-    func testPooledVsStandardEncodingPerformance() async throws {
-        let width = 32
-        let height = 32
-        let iterations = 10
-
-        // Warm up
-        let warmupCoeffs = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
-        let warmupEncoder = HTBlockEncoder(width: width, height: height, subband: .hh)
-        _ = try warmupEncoder.encodeCleanup(coefficients: warmupCoeffs, bitPlane: 7)
-
-        // Standard encoder timing
-        let standardStart = Date()
-        for _ in 0..<iterations {
-            let coeffs = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
-            let encoder = HTBlockEncoder(width: width, height: height, subband: .hh)
-            _ = try encoder.encodeCleanup(coefficients: coeffs, bitPlane: 7)
-        }
-        let standardTime = Date().timeIntervalSince(standardStart)
-
-        // Pooled encoder timing
-        let pooledStart = Date()
-        for _ in 0..<iterations {
-            let coeffs = (0..<(width * height)).map { _ in Int.random(in: -100...100) }
-            let encoder = HTBlockEncoderPooled(width: width, height: height, subband: .hh)
-            _ = try await encoder.encodeCleanup(coefficients: coeffs, bitPlane: 7)
-        }
-        let pooledTime = Date().timeIntervalSince(pooledStart)
-
-        print("Standard encoder: \(standardTime)s")
-        print("Pooled encoder: \(pooledTime)s")
-        print("Speedup: \(standardTime / pooledTime)x")
-
-        // Pooled should be faster or comparable
-        // (In practice, pooled is faster for repeated encoding)
     }
 }

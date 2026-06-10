@@ -140,7 +140,7 @@ check** — confirming the additive ROI work did not perturb the default
 decode path.
 
 `cross_codec_warm_bench.py --in-proc`, M2, medical-real corpus (mid
-fixtures), median ms. Full results: `benchmark-results-arm64-v10.6.0-20260520.json`.
+fixtures), median ms. Full results: `Documentation/Benchmarks/data/benchmark-results-arm64-v10.6.0-20260520.json`.
 
 Decode wall:
 

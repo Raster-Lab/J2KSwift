@@ -6,9 +6,9 @@
 ///
 /// Apple platform-specific features and optimisations.
 ///
-/// Provides Grand Central Dispatch optimisation, Quality of Service classes,
-/// power efficiency modes, thermal state monitoring, and battery-aware processing
-/// for optimal performance on Apple platforms.
+/// Provides Quality of Service classes, power efficiency modes, thermal state
+/// monitoring, and battery-aware processing for optimal performance on Apple
+/// platforms.
 
 import Foundation
 
@@ -23,111 +23,6 @@ import UIKit
 #if os(macOS)
 import IOKit.ps
 #endif
-
-// MARK: - Grand Central Dispatch Optimisation
-
-/// Optimised Grand Central Dispatch utilities for JPEG 2000 processing.
-///
-/// Provides helpers for efficient parallel processing using GCD with
-/// appropriate Quality of Service levels and workload distribution.
-///
-/// Example:
-/// ```swift
-/// let dispatcher = J2KGCDDispatcher()
-/// try await dispatcher.parallelProcess(items: tiles) { tile in
-///     // Process each tile
-/// }
-/// ```
-@available(macOS 10.15, iOS 13.0, tvOS 13.0, *)
-public actor J2KGCDDispatcher {
-    /// Configuration for GCD dispatcher.
-    public struct Configuration: Sendable {
-        /// Quality of Service for processing.
-        public let qos: J2KQualityOfService
-
-        /// Maximum concurrent operations (nil = automatic).
-        public let maxConcurrency: Int?
-
-        /// Whether to use adaptive concurrency based on system load.
-        public let adaptiveConcurrency: Bool
-
-        /// Creates a new configuration.
-        ///
-        /// - Parameters:
-        ///   - qos: Quality of Service level (default: .userInitiated).
-        ///   - maxConcurrency: Maximum concurrent operations (default: automatic).
-        ///   - adaptiveConcurrency: Enable adaptive concurrency (default: true).
-        public init(
-            qos: J2KQualityOfService = .userInitiated,
-            maxConcurrency: Int? = nil,
-            adaptiveConcurrency: Bool = true
-        ) {
-            self.qos = qos
-            self.maxConcurrency = maxConcurrency
-            self.adaptiveConcurrency = adaptiveConcurrency
-        }
-    }
-
-    private let configuration: Configuration
-
-    /// Creates a new GCD dispatcher.
-    ///
-    /// - Parameter configuration: The dispatcher configuration.
-    public init(configuration: Configuration = Configuration()) {
-        self.configuration = configuration
-    }
-
-    /// Processes items in parallel using optimised GCD.
-    ///
-    /// - Parameters:
-    ///   - items: The items to process.
-    ///   - operation: The operation to perform on each item.
-    /// - Throws: ``J2KError`` if processing fails.
-    public func parallelProcess<T: Sendable, R: Sendable>(
-        items: [T],
-        operation: @Sendable @escaping (T) async throws -> R
-    ) async throws -> [R] {
-        let concurrency = effectiveConcurrency()
-
-        return try await withThrowingTaskGroup(of: (Int, R).self) { group in
-            var results: [R?] = Array(repeating: nil, count: items.count)
-
-            for (index, item) in items.enumerated() {
-                // Limit concurrency
-                if index >= concurrency {
-                    let (completedIndex, result) = try await group.next()!
-                    results[completedIndex] = result
-                }
-
-                group.addTask(priority: configuration.qos.taskPriority) {
-                    let result = try await operation(item)
-                    return (index, result)
-                }
-            }
-
-            // Collect remaining results
-            for try await (index, result) in group {
-                results[index] = result
-            }
-
-            return results.compactMap { $0 }
-        }
-    }
-
-    /// Determines effective concurrency level.
-    private func effectiveConcurrency() -> Int {
-        if let max = configuration.maxConcurrency {
-            return max
-        }
-
-        if configuration.adaptiveConcurrency {
-            // Use ProcessInfo to get active processor count
-            return ProcessInfo.processInfo.activeProcessorCount
-        }
-
-        return ProcessInfo.processInfo.processorCount
-    }
-}
 
 // MARK: - Quality of Service
 

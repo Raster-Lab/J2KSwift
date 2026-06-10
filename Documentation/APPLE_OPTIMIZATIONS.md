@@ -164,26 +164,22 @@ let taskID = try await service.scheduleDownload(request: request)
 
 ## Platform-Specific Features
 
-### Grand Central Dispatch Optimization
+### Parallel Processing
 
-Efficiently parallelize processing:
+> The `J2KGCDDispatcher` API formerly documented here was Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md).
+
+Efficiently parallelize processing with structured concurrency:
 
 ```swift
-let dispatcher = J2KGCDDispatcher()
-let results = try await dispatcher.parallelProcess(items: tiles) { tile in
-    // Process tile
-    return processedTile
+let results = try await withThrowingTaskGroup(of: ProcessedTile.self) { group in
+    for tile in tiles {
+        group.addTask { try processTile(tile) }
+    }
+    return try await group.reduce(into: []) { $0.append($1) }
 }
 ```
 
-**Configuration:**
-```swift
-let config = J2KGCDDispatcher.Configuration(
-    qos: .userInitiated,
-    maxConcurrency: 4,
-    adaptiveConcurrency: true
-)
-```
+The codec pipelines parallelise tile work this way internally; no manual dispatcher configuration is required.
 
 ### Quality of Service
 
@@ -327,17 +323,20 @@ let powerManager = J2KPowerEfficiencyManager()
 await powerManager.startMonitoring()
 let powerMode = await powerManager.recommendedMode()
 
-// Configure GCD with appropriate QoS
-let qos: J2KQualityOfService = powerMode == .powerSaver ? .utility : .userInitiated
-let dispatcher = J2KGCDDispatcher(configuration: .init(qos: qos))
+// Pick an appropriate task priority for the power mode
+let priority: TaskPriority = powerMode == .powerSaver ? .utility : .userInitiated
 
 // Allocate SIMD-aligned buffer
 let buffer = try J2KSIMDAlignedBuffer.allocate(size: imageSize, alignment: .cache64)
 
-// Process tiles in parallel
-let results = try await dispatcher.parallelProcess(items: tiles) { tile in
-    // Use buffer for processing
-    return processTile(tile, using: buffer)
+// Process tiles in parallel with structured concurrency
+let results = try await withThrowingTaskGroup(of: ProcessedTile.self) { group in
+    for tile in tiles {
+        group.addTask(priority: priority) {
+            processTile(tile, using: buffer)
+        }
+    }
+    return try await group.reduce(into: []) { $0.append($1) }
 }
 
 // Clean up

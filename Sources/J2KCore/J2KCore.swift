@@ -22,7 +22,6 @@
 /// ### Memory Management
 /// - ``J2KBuffer``
 /// - ``J2KImageBuffer``
-/// - ``J2KMemoryPool``
 /// - ``J2KMemoryTracker``
 ///
 /// ### Enumerations

@@ -9,6 +9,7 @@
 import SwiftUI
 import AppKit
 import J2KCore
+import J2KTestAppCore
 
 // MARK: - Comparison Mode
 

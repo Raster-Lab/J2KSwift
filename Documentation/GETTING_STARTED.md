@@ -43,8 +43,8 @@ let package = Package(
 | iOS      | 17.0           | Full support including Metal GPU acceleration |
 | tvOS     | 17.0           | Full support including Metal GPU acceleration |
 | visionOS | 1.0            | Full support including Metal GPU acceleration |
-| Linux    | Ubuntu 22.04+  | CPU and Vulkan GPU paths; no Metal |
-| Windows  | Windows 10+    | CPU and Vulkan GPU paths; no Metal |
+| Linux    | Ubuntu 22.04+  | CPU paths only; no Metal |
+| Windows  | Windows 10+    | CPU paths only; no Metal |
 
 ---
 
@@ -131,17 +131,10 @@ try device.initialize()
 // All subsequent J2KMetal operations use the GPU automatically.
 ```
 
-### Linux / Windows — Vulkan GPU Compute
+### Linux / Windows — CPU Only
 
-Import `J2KVulkan` and ensure the Vulkan SDK is installed on the target system.
-J2KSwift falls back to CPU processing when no Vulkan device is present.
-
-```swift
-import J2KVulkan
-
-let backend = J2KVulkanBackend()
-// Uses GPU if Vulkan is available, CPU otherwise.
-```
+GPU acceleration is Metal-only (the Vulkan backend was Removed in v11.0.0).
+On Linux and Windows, J2KSwift uses the CPU code paths.
 
 ---
 
@@ -153,6 +146,5 @@ let backend = J2KVulkanBackend()
 - **[Metal GPU Guide](METAL_GPU_GUIDE.md)** — Apple GPU acceleration
 - **[JPIP Guide](JPIP_GUIDE.md)** — JPEG 2000 Interactive Protocol streaming
 - **[JP3D Guide](JP3D_GUIDE.md)** — volumetric / medical imaging
-- **[MJ2 Guide](MJ2_GUIDE.md)** — Motion JPEG 2000 video
 - **[CLI Guide](CLI_GUIDE.md)** — command-line tool (`j2k`)
 - **[DICOM Integration](DICOM_INTEGRATION.md)** — using J2KSwift in DICOM workflows

@@ -11,11 +11,7 @@ You are a performance optimization specialist for J2KSwift. Your job is to profi
 |------|---------|
 | `J2KPipelineProfiler.swift` | Stage-by-stage pipeline timing |
 | `J2KBenchmark.swift` | Benchmark framework |
-| `J2KReferenceBenchmark.swift` | Reference benchmark comparisons |
-| `J2KOpenJPEGBenchmark.swift` | OpenJPEG comparison benchmarks |
 | `J2KPerformanceOptimizer.swift` | Runtime optimization heuristics |
-| `J2KPerformanceValidation.swift` | Performance regression detection |
-| `J2KConcurrencyTuning.swift` | Actor/task concurrency tuning |
 
 ### Memory Management (Sources/J2KCore/)
 | File | Purpose |
@@ -42,7 +38,6 @@ You are a performance optimization specialist for J2KSwift. Your job is to profi
 ### Benchmark Scripts (Scripts/)
 | Script | Purpose |
 |--------|---------|
-| `benchmark_openjpeg.sh` | OpenJPEG comparison |
 | `compare_performance.py` | Performance data analysis |
 | `profile_encoder.py` | Encoder profiling |
 | `medical_benchmark.py` | Medical image benchmarks |
@@ -51,8 +46,6 @@ You are a performance optimization specialist for J2KSwift. Your job is to profi
 ### Test Suite
 | Test | Purpose |
 |------|---------|
-| `PerformanceTests/` | `measure {}` benchmarks |
-| `J2KAccelerateTests/` | Acceleration correctness + speed |
 
 ## Constraints
 - DO NOT optimize without profiling first (measure, then optimize)
@@ -66,9 +59,9 @@ You are a performance optimization specialist for J2KSwift. Your job is to profi
 1. Profile the current bottleneck using `J2KPipelineProfiler`
 2. Identify the hot path (usually DWT, MQ coding, or memory allocation)
 3. Implement optimization (SIMD, buffer pooling, parallelism, cache locality)
-4. Benchmark: before vs after with `swift test --filter PerformanceTests`
+4. Benchmark: before vs after with `Scripts/benchmarks/cross_codec_warm_bench.py`
 5. Verify correctness: `swift test --filter J2KCodecTests`
-6. Compare with OpenJPEG baseline: `Scripts/benchmark_openjpeg.sh`
+6. Compare with other codecs: `Scripts/benchmarks/cross_codec_warm_bench.py`
 
 ## Key Metrics to Track
 - Encode/decode time (ms) per megapixel

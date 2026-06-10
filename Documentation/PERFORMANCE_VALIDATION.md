@@ -162,7 +162,7 @@ A representative encode-pipeline audit for a 1024 × 1024 RGB image:
 | Output codestream        |   1.0 MB  |   ✗    |       ✓       |
 
 **Summary**:
-- 7 allocations total; 5 (71%) are pooled from the `J2KMemoryPool`
+- 7 allocations total; 5 (71%) were pooled at the time of this audit (the `J2KMemoryPool` was Removed in v11.0.0 — the codec now hoists and reuses per-chunk buffers, and GPU paths pool via `J2KMetalBufferPool`)
 - 6 (86%) are 64-byte cache-line aligned
 - Peak working set: ~19.3 MB for a 1024 × 1024 RGB image
 
@@ -294,24 +294,19 @@ v2.0 performance targets.
    4-wide (`__m128`) to 8-wide (`__m256`) AVX2, matching the AVX register width
    and improving throughput by ~18%.
 
-5. **Concurrency tuning** — Tile-level parallelism now uses the work-stealing
-   queue (`J2KWorkStealingQueue`) for better load balancing on heterogeneous
-   core topologies (performance + efficiency cores).
+5. **Concurrency tuning** — Tile-level parallelism used a work-stealing queue
+   (`J2KWorkStealingQueue`) at the time of this pass for load balancing on
+   heterogeneous core topologies. (That queue was Removed in v11.0.0; tile
+   parallelism now uses structured-concurrency task groups.)
 
 ---
 
 ## Validation Infrastructure
 
-The validation is implemented across:
-
-| File | Lines | Description |
-|------|------:|-------------|
-| `Sources/J2KCore/J2KPerformanceValidation.swift` | ~620 | Core validation types and algorithms |
-| `Tests/PerformanceTests/PerformanceValidationTests.swift` | ~400 | 30+ test cases |
-| `Documentation/PERFORMANCE_VALIDATION.md` | this file | Human-readable report |
-
-The `PerformanceValidationReport.generate(simulate:)` method provides a one-call
-entry point that produces a complete validation report for any host platform.
+> The `J2KPerformanceValidation` infrastructure that produced this report was
+> Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md). This file is
+> retained as a historical record; current performance claims are produced by
+> `Scripts/benchmarks/cross_codec_warm_bench.py` (see Documentation/BENCHMARK.md).
 
 ---
 
@@ -320,15 +315,11 @@ entry point that produces a complete validation report for any host platform.
 ### Local Benchmarks (macOS / Linux)
 
 ```bash
-# Full performance validation suite
-swift test -c release --filter PerformanceValidationTests
-
-# All performance tests
-swift test -c release --filter PerformanceTests
-
-# OpenJPEG comparison (requires openjpeg installed)
-Scripts/benchmark_openjpeg.sh --sizes 512,1024,2048 --modes all --runs 5 --warmup 2
+# Cross-codec warm benchmark (current canonical driver)
+python3 Scripts/benchmarks/cross_codec_warm_bench.py
 ```
+
+(The `PerformanceValidationTests` suite and `Scripts/benchmark_openjpeg.sh` referenced in earlier revisions were Removed in v11.0.0.)
 
 ### CI Validation
 

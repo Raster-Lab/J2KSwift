@@ -203,14 +203,10 @@ let metalDWT = JP3DMetalDWT()
 
 ---
 
-## Vulkan GPU (Linux / Windows)
+## Non-Apple platforms
 
-For non-Apple platforms, import `J2KVulkan`:
-
-```swift
-import J2KVulkan
-// See VULKAN_GPU_COMPUTE.md for full Vulkan documentation.
-```
+> The experimental `J2KVulkan` backend was removed in v11.0.0 (J2KSwift is
+> Apple-Silicon-only since v8.0.0). Non-Apple builds use the CPU paths.
 
 ---
 
