@@ -59,14 +59,11 @@ Three acceleration backends with a shared Accelerate layer:
 3. Implement GPU kernel or SIMD path
 4. Add fallback: `#if canImport(Accelerate)` / `#if canImport(Metal)`
 5. Benchmark against CPU baseline
-6. Run tests: `swift test --filter J2KAccelerateTests` / `J2KMetalTests` / `J2KVulkanTests`
+6. Run tests: `swift test --filter J2KMetalTests`
 
 ## Performance Validation
 ```bash
-swift test --filter J2KAccelerateTests
 swift test --filter J2KMetalTests
-swift test --filter J2KVulkanTests
-swift test --filter PerformanceTests
 ```
 
 ## Output Format

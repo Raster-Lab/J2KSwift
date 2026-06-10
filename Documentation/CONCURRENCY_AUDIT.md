@@ -19,11 +19,11 @@ The following types use Swift actor isolation for thread-safe mutable state:
 | `J2KPipelineProfiler` | J2KCore | Pipeline stage timing and memory profiling |
 | `J2KUnifiedMemoryManager` | J2KCore | Apple Silicon unified memory allocation |
 | `J2KCompressedMemoryMonitor` | J2KCore | Memory pressure monitoring |
-| `J2KMemoryPool` | J2KCore | Buffer pooling and reuse |
+| `J2KMemoryPool` | J2KCore | Buffer pooling and reuse — Removed in v11.0.0 |
 | `J2KMemoryTracker` | J2KCore | Memory allocation tracking |
-| `J2KThreadPool` | J2KCore | Parallel work distribution |
+| `J2KThreadPool` | J2KCore | Parallel work distribution — Removed in v11.0.0 |
 | `J2KPerformanceOptimizer` | J2KCore | Pipeline performance coordination |
-| `J2KGCDDispatcher` | J2KCore | GCD-based async work dispatch |
+| `J2KGCDDispatcher` | J2KCore | GCD-based async work dispatch — Removed in v11.0.0 |
 | `J2KPowerEfficiencyManager` | J2KCore | Power efficiency monitoring |
 | `J2KThermalStateMonitor` | J2KCore | Thermal state monitoring |
 | `J2KAsyncFileIO` | J2KCore | Asynchronous file I/O |
@@ -40,7 +40,7 @@ All public struct and enum types in J2KCore conform to `Sendable`:
 - `J2KVolume`, `J2KVolumeComponent`, `J2KVolumeMetadata`
 - `J2KBenchmark`, `BenchmarkResult`, `BenchmarkComparison`
 - `J2KStageMetrics`, `J2KProfileReport`
-- `J2KZeroCopyBuffer`, `J2KBufferSlice`
+- `J2KZeroCopyBuffer`, `J2KBufferSlice` (Removed in v11.0.0)
 - All enums: `J2KError`, `J2KColorSpace`, `J2KSubband`, `J2KMarker`,
   `J2KPipelineStage`, `J2KVolumeModality`, `J2KPlatform`, `J2KMemoryInfo`,
   `J2KPathUtilities`, `J2KFoundationCompat`, `J2KLargePageAllocator`
@@ -62,7 +62,7 @@ the copy-on-write (CoW) pattern. They are `@unchecked Sendable` because:
 |-------|------|-------------|
 | `J2KBuffer.Storage` | J2KBuffer.swift | `J2KBuffer` (struct) |
 | `J2KImageBuffer.Storage` | J2KImageBuffer.swift | `J2KImageBuffer` (struct) |
-| `J2KSharedBuffer` | J2KZeroCopyBuffer.swift | `J2KZeroCopyBuffer` (struct) |
+| `J2KSharedBuffer` | J2KZeroCopyBuffer.swift | `J2KZeroCopyBuffer` (struct) — Removed in v11.0.0 |
 
 ### Raw Memory Managers
 
@@ -71,8 +71,8 @@ they need synchronous allocation/deallocation semantics:
 
 | Class | File | Justification |
 |-------|------|---------------|
-| `J2KArenaAllocator` | J2KOptimizedAllocator.swift | Internal arena allocator; synchronous pointer return required |
-| `J2KScratchBuffers` | J2KOptimizedAllocator.swift | Internal scratch buffers; synchronous closure-based access |
+| `J2KArenaAllocator` | J2KOptimizedAllocator.swift | Internal arena allocator; synchronous pointer return required — Removed in v11.0.0 |
+| `J2KScratchBuffers` | J2KOptimizedAllocator.swift | Internal scratch buffers; synchronous closure-based access — Removed in v11.0.0 |
 | `J2KMemoryMappedFile` | J2KAppleMemory.swift | File descriptor lifecycle management; Darwin-only |
 | `J2KSIMDAlignedBuffer` | J2KAppleMemory.swift | Immutable after creation; only holds pointer + metadata |
 
@@ -170,7 +170,7 @@ inner class and the `NSLock`.
 | `J2KTranscoder.encodeFromCoefficients()` | `nonisolated(unsafe)` | ✅ Justified |
 | `MJ2VideoToolboxEncoder.compressionSession` | `nonisolated(unsafe)` | ✅ Justified |
 | `MJ2VideoToolboxDecoder.decompressionSession` | `nonisolated(unsafe)` | ✅ Justified |
-| `J2KBufferPool` | Actor | ✅ Clean |
+| `J2KBufferPool` | Actor | ✅ Clean — Removed in v11.0.0 |
 | `HTBlockCoderMemoryTracker` | Actor | ✅ Clean |
 | `MJ2SoftwareEncoder` | Actor | ✅ Clean |
 
@@ -187,24 +187,15 @@ inner class and the `NSLock`.
 
 All types are concurrency-safe. Public types use either actors or `Sendable` structs.
 
+> The MJ2 actor stack audited here (`MJ2FileReader`, `MJ2Extractor`, `MJ2Creator`, `MJ2Player`, `MJ2SampleTableBuilder`, `MJ2StreamWriter`) was Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md).
+
 | Type | Pattern | Status |
 |------|---------|--------|
-| `MJ2FileReader` | Actor | ✅ Clean |
-| `MJ2Extractor` | Actor | ✅ Clean |
-| `MJ2Creator` | Actor | ✅ Clean |
-| `MJ2Player` | Actor | ✅ Clean |
-| `MJ2SampleTableBuilder` | Actor | ✅ Clean |
-| `MJ2StreamWriter` | Actor | ✅ Clean |
 | All config/data types | Sendable structs | ✅ Clean |
 
 ### J2KAccelerate Module
 
-All types are concurrency-safe. SIMD operations are inherently thread-safe.
-
-| Type | Pattern | Status |
-|------|---------|--------|
-| `J2KAcceleratePerformance` | Actor | ✅ Clean |
-| All wavelet/color/SIMD types | Sendable structs | ✅ Clean |
+> Module Removed in v11.0.0; its SIMD paths live in `J2KCodec`/`J2KCodecNEON`.
 
 ### JPIP Module
 
@@ -290,6 +281,11 @@ All types use proper actor isolation. Metal resources managed within actor bound
 | `JPIPNetworkTransport.connect()` | Continuation guard | Scoped lifetime, single-resume guarantee |
 
 ## Performance Tuning (Week 240-241)
+
+> The concurrency-tuning machinery audited in this section (contention
+> analyzer, work-stealing queue, concurrent pipeline, and friends) was
+> Removed in v11.0.0 as dead code (see RELEASE_NOTES_v11.0.0.md). The rows
+> below are retained as a historical audit record.
 
 ### New Types Added
 

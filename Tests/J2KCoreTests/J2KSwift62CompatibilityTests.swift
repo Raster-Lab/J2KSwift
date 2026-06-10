@@ -270,43 +270,6 @@ final class J2KSwift62CompatibilityTests: XCTestCase {
         XCTAssertEqual(report.metrics.count, 50)
     }
 
-    /// Verify concurrent read/write to J2KMemoryPool actor
-    func testMemoryPoolConcurrentAccess() async throws {
-        let pool = J2KMemoryPool()
-
-        // Acquire and release buffers concurrently
-        await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<20 {
-                group.addTask {
-                    let buffer = await pool.acquire(capacity: 1024)
-                    await pool.release(buffer)
-                }
-            }
-        }
-
-        // If we get here without deadlock or crash, concurrency is correct
-        XCTAssert(true, "Memory pool handled 20 concurrent acquire/release cycles")
-    }
-
-    /// Verify concurrent access to J2KThreadPool actor
-    func testThreadPoolConcurrentAccess() async throws {
-        let pool = J2KThreadPool()
-
-        // Run multiple parallel maps concurrently
-        await withTaskGroup(of: [Int].self) { group in
-            for _ in 0..<5 {
-                group.addTask {
-                    let result = try? await pool.parallelMap(Array(0..<10)) { $0 * 2 }
-                    return result ?? []
-                }
-            }
-
-            for await result in group {
-                XCTAssertEqual(result.count, 10)
-            }
-        }
-    }
-
     /// Verify Sendable conformance for all public API types
     func testAllPublicTypesSendable() {
         // Core types

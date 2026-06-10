@@ -17,8 +17,8 @@ final class J2KDocumentationTests: XCTestCase {
     /// Verifies that DocC catalog directories exist for all library modules.
     func testDocCCatalogsExistForAllModules() throws {
         let modules = [
-            "J2KCore", "J2KCodec", "J2KAccelerate", "J2KFileFormat",
-            "J2KMetal", "J2KVulkan", "JPIP", "J2K3D"
+            "J2KCore", "J2KCodec", "J2KFileFormat",
+            "J2KMetal", "JPIP", "J2K3D"
         ]
 
         for module in modules {
@@ -244,11 +244,11 @@ final class J2KDocumentationTests: XCTestCase {
         XCTAssertEqual(validStatuses.count, 4, "Four ADR status values are defined")
     }
 
-    /// Verifies that architecture documentation references all eight modules.
+    /// Verifies that architecture documentation references all six modules.
     func testArchitectureDocumentationCoversAllModules() throws {
         let modules = [
-            "J2KCore", "J2KCodec", "J2KAccelerate", "J2KFileFormat",
-            "J2KMetal", "J2KVulkan", "JPIP", "J2K3D",
+            "J2KCore", "J2KCodec", "J2KFileFormat",
+            "J2KMetal", "JPIP", "J2K3D",
         ]
         for module in modules {
             XCTAssertFalse(module.isEmpty, "Module '\(module)' must be referenced in architecture docs")

@@ -9,15 +9,11 @@ You are a testing specialist for the J2KSwift JPEG 2000 project. Your job is to 
 Tests are in `Tests/` organized by module:
 - `J2KCoreTests/` — Core types, markers, conformance testing
 - `J2KCodecTests/` — Encoder/decoder pipeline, DWT, quantization
-- `J2KAccelerateTests/` — Accelerate framework optimizations
 - `J2KFileFormatTests/` — JP2/J2K file format parsing
 - `J2KCLITests/` — CLI command tests
-- `J2KInteroperabilityTests/` — Cross-codec validation
 - `J2KComplianceTests/` — ISO compliance
 - `JPIPTests/` — Network streaming
 - `JP3DTests/` — 3D volumetric imaging
-- `J2KXSTests/` — JPEG XS
-- `PerformanceTests/` — Benchmarks
 
 ## Testing Patterns
 

@@ -1,6 +1,6 @@
 # ADR-003 — Modular GPU Backends
 
-**Status**: Accepted
+**Status**: Superseded (Apple-only since v8.0.0; J2KVulkan removed in v11.0.0)
 
 **Date**: 2024-09-01
 

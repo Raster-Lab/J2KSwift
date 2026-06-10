@@ -22,7 +22,6 @@
 /// ### Memory Management
 /// - ``J2KBuffer``
 /// - ``J2KImageBuffer``
-/// - ``J2KMemoryPool``
 /// - ``J2KMemoryTracker``
 ///
 /// ### Enumerations
@@ -888,5 +887,5 @@ public struct J2KConfiguration: Sendable {
 ///
 /// - Returns: A string representing the current version in semver format.
 public func getVersion() -> String {
-    "10.25.0"
+    "11.0.0"
 }

@@ -14,17 +14,16 @@ adds several new capabilities:
 
 - **Swift 6 strict concurrency** — every public type is ``Sendable``;
   mutable shared state is managed by actors.
-- **GPU acceleration** — Metal (``J2KMetal``) and Vulkan (``J2KVulkan``)
-  modules provide hardware-accelerated DWT, colour transform, and
-  quantisation.
+- **GPU acceleration** — the Metal (``J2KMetal``) module provides
+  hardware-accelerated DWT, colour transform, and quantisation.
 - **HTJ2K (High Throughput JPEG 2000)** — Part 15 block coder support for
   dramatically faster encoding and decoding.
 - **JP3D (Volumetric JPEG 2000)** — ``JP3DEncoder`` and ``JP3DDecoder`` for
   three-dimensional image data.
 - **JPIP streaming** — ``JPIPClient`` and ``JPIPServer`` with progressive
   delivery, session persistence, and adaptive quality.
-- **New modules** — ``J2KMetal``, ``J2KVulkan``, ``J2K3D``, and ``JPIP`` have
-  been added to the package.
+- **New modules** — ``J2KMetal``, ``J2K3D``, and ``JPIP`` have been added to
+  the package.
 
 ## Breaking Changes
 
@@ -53,9 +52,7 @@ and JPEG 2000 terminology:
 | `J2KQuantizationParameters`    | ``J2KQuantizationParameters`` (now ``Sendable``) |
 | `J2KEncoderOptions` (if used)  | ``J2KEncodingConfiguration``         |
 
-> Note: ``J2KColorTransform`` retains its original name in J2KCodec and
-> J2KAccelerate. The Vulkan module uses British spelling
-> (`J2KVulkanColourTransform`) to align with the Vulkan ecosystem conventions.
+> Note: ``J2KColorTransform`` retains its original name in J2KCodec.
 
 ### Encoder & Decoder API
 
@@ -172,7 +169,6 @@ Add the new module products to your target dependencies as needed:
         .product(name: "J2KFileFormat", package: "J2KSwift"),
         .product(name: "JPIP", package: "J2KSwift"),       // new
         .product(name: "J2KMetal", package: "J2KSwift"),    // new
-        .product(name: "J2KVulkan", package: "J2KSwift"),   // new
         .product(name: "J2K3D", package: "J2KSwift"),       // new
     ]
 )

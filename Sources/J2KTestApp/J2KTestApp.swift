@@ -7,6 +7,7 @@
 
 import Foundation
 import J2KCore
+import J2KTestAppCore
 
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI

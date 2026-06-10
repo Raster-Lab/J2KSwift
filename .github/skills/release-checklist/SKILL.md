@@ -47,10 +47,7 @@ swift test --filter J2KMetalTests
 swift test --filter J2KVulkanTests
 swift test --filter JPIPTests
 swift test --filter JP3DTests
-swift test --filter J2KXSTests
 swift test --filter J2KCLITests
-swift test --filter J2KInteroperabilityTests
-swift test --filter PerformanceTests
 ```
 
 ### 4. ISO/IEC 15444-4 Compliance Gate (MANDATORY)

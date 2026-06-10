@@ -26,7 +26,7 @@ swift test --filter J2KVulkanTests
 ### 2. CPU Baseline
 ```bash
 # Run codec tests to get CPU timing baseline
-swift test -c release --filter PerformanceTests
+swift test -c release --filter J2KMedicalCorpusPerformanceTests
 ```
 
 ### 3. Accelerate Framework Benchmark

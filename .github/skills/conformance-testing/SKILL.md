@@ -92,4 +92,4 @@ Document results in the following format:
 - `CONFORMANCE_TESTING.md` — Conformance testing guide
 - `RELEASE_CHECKLIST.md` — Release checklist template
 - `Tests/J2KCoreTests/J2KConformanceTestingTests.swift` — Test suite
-- `Sources/J2KCore/J2KPart4ConformanceFinal.swift` — Part 4 conformance
+- `Sources/J2KCore/J2KPart1Conformance.swift` — Part 1 codestream validators

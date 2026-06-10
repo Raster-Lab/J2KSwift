@@ -8,6 +8,7 @@
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
 import J2KCore
+import J2KTestAppCore
 
 /// Playlist management screen for creating, saving, and running test playlists.
 struct PlaylistView: View {

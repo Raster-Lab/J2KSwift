@@ -10,6 +10,7 @@
 import AppKit
 import SwiftUI
 import J2KCore
+import J2KTestAppCore
 import J2K3D
 
 /// GUI screen for JP3D volumetric testing.

@@ -172,7 +172,7 @@ When running on Apple platforms with Accelerate framework:
 **Acceleration Notes:**
 - DWT benefits most from hardware acceleration (8× speedup possible)
 - SIMD provides consistent 2-3× speedup for vector operations
-- Multi-threading (via J2KThreadPool) provides near-linear scaling up to 8 cores
+- Multi-threading provided near-linear scaling up to 8 cores at the time of this benchmark (then via `J2KThreadPool`, Removed in v11.0.0; tile parallelism now uses structured-concurrency task groups)
 
 ## Comparison with OpenJPEG
 
@@ -264,7 +264,7 @@ Based on similar Swift implementations and OpenJPEG benchmarks:
 | 8 cores | 8.0× | 6.5× | 81% |
 
 **Multi-threading Analysis:**
-- J2KThreadPool achieves >80% efficiency up to 8 cores (target met)
+- >80% parallel efficiency up to 8 cores at the time of this benchmark (target met; measured with `J2KThreadPool`, Removed in v11.0.0)
 - Code-block level parallelization is ideal granularity
 - Tile-level parallelization for large images
 - Actor-based concurrency prevents data races

@@ -90,7 +90,6 @@ print(f'Lossless: {\"YES\" if mae == 0 else \"NO\"}')
 ### 5. Test Suite Validation
 ```bash
 swift test --filter J2KCoreTests
-swift test --filter J2KInteroperabilityTests
 ```
 
 ### 6. DICOM Integration Check

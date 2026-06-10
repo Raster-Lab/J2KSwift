@@ -9,6 +9,7 @@
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
 import J2KCore
+import J2KTestAppCore
 
 /// GUI screen for Motion JPEG 2000 testing.
 ///

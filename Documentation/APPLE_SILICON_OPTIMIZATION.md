@@ -172,14 +172,11 @@ vDSP_vadd(input1, 1, input2, 1, output, 1, vDSP_Length(count))
 Memory allocations are expensive on any platform:
 
 ```swift
-import J2KCore
-
-// ✅ Good: Reuse buffers
-let pool = J2KMemoryPool()
-let buffer = pool.allocate(size: 4096)
-// Use buffer...
-pool.deallocate(buffer)
-// Next allocation may reuse memory
+// ✅ Good: Hoist the buffer out of the loop and reuse it
+var buffer = [Float](repeating: 0, count: 1000)
+for _ in 0..<1000 {
+    // Reuse `buffer` every iteration; reset contents as needed
+}
 
 // ❌ Bad: Allocate repeatedly
 for _ in 0..<1000 {
@@ -187,6 +184,8 @@ for _ in 0..<1000 {
     // Allocates memory every iteration
 }
 ```
+
+(J2KSwift's codec hot paths follow the same pattern internally; the GPU paths additionally reuse `MTLBuffer`s via `J2KMetalBufferPool`. The former `J2KMemoryPool` API was Removed in v11.0.0.)
 
 ### 6. Use Async Compute
 

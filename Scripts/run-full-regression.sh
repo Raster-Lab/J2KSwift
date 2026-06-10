@@ -48,9 +48,9 @@ LOGDIR="${TMPDIR:-/tmp}/j2kswift-regression-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$LOGDIR"
 : > "$LOGDIR/failed-tests.txt"
 
-ALL_TARGETS="J2KCoreTests J2KCodecTests J2KAccelerateTests J2KFileFormatTests \
-J2KMetalTests J2KVulkanTests JPIPTests J2KCLITests JP3DTests J2KXSTests \
-J2KComplianceTests J2KInteroperabilityTests PerformanceTests J2KTestAppTests \
+ALL_TARGETS="J2KCoreTests J2KCodecTests J2KFileFormatTests \
+J2KMetalTests JPIPTests J2KCLITests JP3DTests \
+J2KComplianceTests J2KTestAppTests \
 J2KDaemonTests J2KDaemonClientTests"
 SPLIT_TARGET="J2KMetalTests"   # run per-suite (hangs cumulatively within itself)
 

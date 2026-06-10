@@ -28,7 +28,7 @@ Run the built-in pipeline profiler to get per-stage timing:
 .build/release/j2k benchmark --input /tmp/test.pgm --iterations 10
 
 # Alternatively, run performance tests
-swift test -c release --filter PerformanceTests
+swift test -c release --filter J2KMedicalCorpusPerformanceTests
 ```
 
 ### 3. OpenJPEG Baseline Comparison

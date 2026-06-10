@@ -70,7 +70,7 @@ Cross-checked against the **OpenJPH** reference codec:
 ### Root cause
 [Sources/J2KCodec/J2KEncoderPipeline.swift](Sources/J2KCodec/J2KEncoderPipeline.swift) — the conformant HT encoder converts coefficients to OpenJPH sign-magnitude as `sign | (|v| << (31 - K_max))`, where the magnitude window `K_max` was derived from the **single-level** subband gain `{LL:0, HL/LH:1, HH:2}`. A multi-level reversible 5/3 transform expands the coefficient range (the deep **LL** band especially); high-contrast 8-bit content (hard 0↔255 edges) then produces coefficients whose magnitude exceeds `2^K_max`. `|v| << shift` overflowed **bit 31 (the sign bit)**, silently dropping the top bitplane.
 
-Instrumentation on the minimal case: `comp=1 sub=ll res=0 kMax=8 window=256 maxAbs=259 → OVERFLOW`. Minimal reproducer shrunk to an **8×8 tile** ([results/htj2k_bug_repro/](results/htj2k_bug_repro/)).
+Instrumentation on the minimal case: `comp=1 sub=ll res=0 kMax=8 window=256 maxAbs=259 → OVERFLOW`. Minimal reproducer shrunk to an **8×8 tile** ([Documentation/Benchmarks/data/htj2k_bug_repro/](Documentation/Benchmarks/data/htj2k_bug_repro/)).
 
 Why medical data was immune: 12/16-bit DICOM stores low-range data in a wider container and never approaches full scale, so its 5/3 coefficients stayed inside the (under-sized) window.
 

@@ -89,7 +89,6 @@ echo ""
 echo "==================================="
 echo "Running Performance Benchmarks"
 echo "==================================="
-swift test -c release --filter J2KAccelerateBenchmarks || echo "Benchmarks completed (may have expected skips)"
 
 echo ""
 echo "==================================="

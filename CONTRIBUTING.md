@@ -307,23 +307,20 @@ The following thresholds apply to the reference hardware (Apple M2 Pro, 16 GB):
 A CI job compares the measured baseline against these thresholds and fails the
 build if any threshold is exceeded. Results are posted as a PR comment.
 
-### Using the OpenJPEG Benchmark Script
+### Using the Cross-Codec Benchmark Drivers
 
-`Scripts/benchmark_openjpeg.sh` compares J2KSwift throughput against
-OpenJPEG on a set of reference images. Run it locally before submitting
-performance-sensitive changes:
+`Scripts/benchmarks/cross_codec_warm_bench.py` compares J2KSwift against the
+reference codecs (OpenJPH, Grok, Kakadu, OpenJPEG where installed) on the
+33-fixture corpus. Run it locally before submitting performance-sensitive
+changes (the older `Scripts/benchmark_openjpeg.sh` was Removed in v11.0.0):
 
 ```bash
-# Requires OpenJPEG to be installed (brew install openjpeg)
-bash Scripts/benchmark_openjpeg.sh
-
-# Limit to a specific image size
-bash Scripts/benchmark_openjpeg.sh --size 4096x4096
+python3 Scripts/benchmarks/cross_codec_warm_bench.py
 ```
 
-The script outputs a Markdown table suitable for pasting into a pull request
-description. Benchmark results are also saved to `profile_results/` for
-historical comparison.
+The driver outputs Markdown tables suitable for pasting into a pull request
+description; JSON captures are committed under `Documentation/Benchmarks/data/`.
+See `Documentation/BENCHMARK.md` for the full methodology.
 
 ## Documentation Standards
 
@@ -513,7 +510,7 @@ Write a new ADR when you are:
 |-----|---------|
 | [ADR-001](Documentation/ADR/ADR-001-swift6-strict-concurrency.md) | Swift 6 strict concurrency |
 | [ADR-002](Documentation/ADR/ADR-002-value-types-cow.md) | Value types with copy-on-write storage |
-| [ADR-003](Documentation/ADR/ADR-003-modular-gpu-backends.md) | Modular GPU backends (Metal + Vulkan) |
+| [ADR-003](Documentation/ADR/ADR-003-modular-gpu-backends.md) | Modular GPU backends — Superseded (Apple-only since v8.0.0; J2KVulkan module Removed in v11.0.0) |
 | [ADR-004](Documentation/ADR/ADR-004-no-dicom-dependency.md) | No DICOM library dependencies |
 | [ADR-005](Documentation/ADR/ADR-005-british-english.md) | British English in documentation |
 

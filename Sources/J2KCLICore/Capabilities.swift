@@ -107,12 +107,9 @@ extension J2KCLI {
             "J2KCore": true,
             "J2KCodec": true,
             "J2KFileFormat": true,
-            "J2KAccelerate": true,
             "J2K3D": true,
             "JPIP": true,
-            "J2KMetal": true,
-            "J2KVulkan": true,
-            "J2KXS": true
+            "J2KMetal": true
         ]
 
         // Features
@@ -173,12 +170,9 @@ extension J2KCLI {
             print("  ✓ J2KCore        — Core types and utilities")
             print("  ✓ J2KCodec       — Encoding/decoding")
             print("  ✓ J2KFileFormat  — File format support")
-            print("  ✓ J2KAccelerate  — Hardware acceleration")
             print("  ✓ J2K3D          — 3D volumetric (JP3D)")
             print("  ✓ JPIP           — Network streaming")
             print("  ✓ J2KMetal       — Metal GPU compute")
-            print("  ✓ J2KVulkan      — Vulkan GPU compute")
-            print("  ✓ J2KXS          — JPEG XS support")
             print("")
             print("Features:")
             print("  ✓ Multi-file batch processing")

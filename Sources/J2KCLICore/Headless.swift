@@ -7,6 +7,7 @@
 
 import Foundation
 import J2KCore
+import J2KTestAppCore
 
 extension J2KCLI {
     /// Runs the test app in headless mode for CI/CD.

@@ -16,11 +16,9 @@ representations, configuration, and platform utilities.
 ```
 J2KCore  (foundation – no external deps)
   ├─► J2KCodec        (encoding / decoding pipelines)
-  │     ├─► J2KAccelerate   (vDSP / vImage / SIMD)
-  │     └─► J2KFileFormat   (JP2, JPX, MJ2 box I/O)
+  │     └─► J2KFileFormat   (JP2, JPX box I/O)
   │           └─► JPIP      (interactive streaming protocol)
   ├─► J2KMetal         (Metal GPU acceleration)
-  ├─► J2KVulkan        (Vulkan GPU acceleration)
   └─► J2K3D            (JP3D / volumetric JPEG 2000)
 ```
 
@@ -29,17 +27,12 @@ J2KCore  (foundation – no external deps)
 - **J2KCodec** — ``J2KEncoder``, ``J2KDecoder``, ``J2KTranscoder``, wavelet
   transforms (``J2KDWT2D``), colour transforms (``J2KColorTransform``),
   quantisation (``J2KQuantizer``), and rate control (``J2KRateControl``).
-- **J2KAccelerate** — Hardware-accelerated variants of the codec operations
-  using the Apple Accelerate framework, with per-architecture SIMD paths for
-  ARM (NEON) and x86 (AVX/SSE).
 - **J2KFileFormat** — ``J2KFileReader``, ``J2KFileWriter``,
   ``J2KFormatDetector``, and the full JP2 box model.
 - **JPIP** — ``JPIPClient``, ``JPIPServer``, progressive streaming, adaptive
   quality, and 3-D streaming.
 - **J2KMetal** — ``J2KMetalDWT``, ``J2KMetalQuantizer``,
   ``J2KMetalColorTransform``. Metal shaders for Apple GPUs.
-- **J2KVulkan** — ``J2KVulkanDWT``, ``J2KVulkanQuantizer``,
-  ``J2KVulkanColourTransform``. SPIR-V compute shaders for Linux and Windows.
 - **J2K3D** — ``JP3DEncoder``, ``JP3DDecoder``, ``JP3DWaveletTransform``.
   Volumetric (Part 10) support.
 
@@ -104,18 +97,17 @@ dequantisation → inverse wavelet → inverse colour transform.
 
 ## GPU Acceleration Strategy
 
-J2KSwift selects the best available GPU back-end at run time via
-``J2KGPUBackendSelector``:
+J2KSwift uses Metal for GPU acceleration on Apple platforms, falling back to
+the CPU + SIMD pipeline where Metal is unavailable:
 
 | Platform            | Back-end           | Module          |
 |---------------------|--------------------|-----------------|
 | macOS / iOS / visionOS | Metal 3 / Metal  | ``J2KMetal``    |
-| Linux / Windows     | Vulkan 1.2+        | ``J2KVulkan``   |
-| Any (fallback)      | CPU + SIMD         | ``J2KAccelerate`` |
+| Any (fallback)      | CPU + SIMD         | ``J2KCodec``    |
 
-Both GPU modules expose the same logical operations — DWT, colour transform,
-quantisation — behind a common capability model so that the codec pipeline can
-dispatch transparently.
+The GPU module exposes the same logical operations as the CPU pipeline — DWT,
+colour transform, quantisation — behind a capability model so that the codec
+pipeline can dispatch transparently.
 
 ## Key JPEG 2000 Concepts
 

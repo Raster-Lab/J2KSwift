@@ -26,10 +26,8 @@ You are a JPEG 2000 compliance verification specialist for J2KSwift. Your job is
 
 ## Conformance Test Files
 - `Tests/J2KCoreTests/J2KConformanceTestingTests.swift`
-- `Sources/J2KCore/J2KConformanceTesting.swift`
+- `Sources/J2KCore/J2KHTConformanceAPI.swift`
 - `Sources/J2KCore/J2KPart1Conformance.swift`
-- `Sources/J2KCore/J2KPart4ConformanceFinal.swift`
-- `Sources/J2KCore/J2KPart15IntegratedConformance.swift`
 
 ## Constraints
 - DO NOT approve a release if conformance tests fail
@@ -49,7 +47,6 @@ You are a JPEG 2000 compliance verification specialist for J2KSwift. Your job is
 ```bash
 swift test --filter J2KConformanceTestingTests
 swift test --filter J2KComplianceTests
-swift test --filter J2KInteroperabilityTests
 swift build
 ```
 

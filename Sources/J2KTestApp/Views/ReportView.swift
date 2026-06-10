@@ -8,6 +8,7 @@
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
 import J2KCore
+import J2KTestAppCore
 
 /// Reporting dashboard showing summary stats, trend chart, coverage heatmap, and export.
 struct ReportView: View {

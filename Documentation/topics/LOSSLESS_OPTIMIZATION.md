@@ -4,6 +4,8 @@
 
 J2KSwift v1.1.1 includes significant optimizations for lossless decoding using the reversible 5/3 wavelet filter. These optimizations provide substantial performance improvements while maintaining perfect reconstruction accuracy.
 
+> **Historical note**: the `J2KBufferPool` actor originally described in this guide was Removed in v11.0.0 (dead code; see RELEASE_NOTES_v11.0.0.md). The live decoder hoists per-chunk scratch buffers outside its hot loops instead, and GPU paths reuse buffers through `J2KMetalBufferPool`. The DWT optimisation techniques below remain accurate.
+
 ## Performance Improvements
 
 ### Benchmark Results (Swift 6, x86_64-linux)
@@ -51,7 +53,7 @@ J2KSwift v1.1.1 includes significant optimizations for lossless decoding using t
 
 The optimization consists of three main components:
 
-1. **Buffer Pool (`J2KBufferPool`)**: Thread-safe actor-based buffer pool that reduces memory allocations by reusing temporary arrays.
+1. **Hoisted scratch buffers**: temporary arrays are allocated once per decode chunk and reused across rows/columns, reducing memory allocations. (The original `J2KBufferPool` actor was Removed in v11.0.0.)
 
 2. **Optimized 1D DWT (`J2KDWT1DOptimizer`)**: Specialized implementation of the reversible 5/3 inverse wavelet transform with:
    - Pre-computed boundary extension values for symmetric mode
@@ -103,11 +105,11 @@ even[i] = lowpass[i] - ((left + right + 2) >> 2)  // Division by 4
 odd[i] = highpass[i] + ((left + right) >> 1)      // Division by 2
 ```
 
-#### 4. Buffer Pooling
+#### 4. Buffer Reuse
 
-The `J2KBufferPool` actor maintains caches of reusable buffers:
-- Up to 8 buffers cached per size
-- Automatic buffer clearing before reuse
+Temporary buffers are reused rather than re-allocated in the hot paths:
+- CPU transforms hoist per-chunk scratch buffers outside the row/column loops
+- GPU dispatches reuse `MTLBuffer`s via `J2KMetalBufferPool`
 - Thread-safe via Swift concurrency
 
 ## Usage
@@ -144,25 +146,9 @@ let reconstructed = try optimizer2D.inverseTransform2DOptimized(
 )
 ```
 
-### Buffer Pool Management
+### Buffer Reuse
 
-The buffer pool can be managed globally:
-
-```swift
-// Get shared pool
-let pool = J2KBufferPool.shared
-
-// Acquire buffer
-let buffer = await pool.acquireInt32Buffer(size: 1024)
-
-// Use buffer...
-
-// Release back to pool
-await pool.releaseInt32Buffer(buffer)
-
-// Clear pool when done (optional)
-await pool.clear()
-```
+Buffer reuse is internal to the codec — there is no public pool API. CPU transforms hoist their scratch buffers per chunk, and the GPU paths manage `MTLBuffer` reuse through `J2KMetalBufferPool` automatically. (The public `J2KBufferPool` API shown in earlier revisions of this guide was Removed in v11.0.0.)
 
 ## Testing
 
@@ -171,14 +157,12 @@ The optimization includes comprehensive tests:
 ```bash
 # Run optimization tests
 swift test --filter J2KLosslessDecodingOptimizationTests
-
-# Run benchmark suite
-swift test --filter J2KLosslessDecodingBenchmarkTests.testRunBenchmarkSuite
 ```
+
+(The separate `J2KLosslessDecodingBenchmark` suite was Removed in v11.0.0.)
 
 ### Test Coverage
 
-- Buffer pool functionality (acquisition, release, statistics)
 - 1D transform correctness (edge cases, large signals, boundary modes)
 - 2D transform correctness (various sizes, reconstruction accuracy)
 - Performance benchmarks (1D, 2D, multi-level)
@@ -208,16 +192,11 @@ The optimization is fully backward compatible:
 
 ## Performance Tips
 
-1. **Reuse Decoder Instances**: The decoder automatically benefits from buffer pooling across multiple decode operations.
+1. **Reuse Decoder Instances**: The decoder automatically reuses internal scratch buffers across decode operations.
 
-2. **Batch Processing**: Process multiple images in sequence to maximize buffer pool effectiveness.
+2. **Batch Processing**: Process multiple images in sequence to maximize buffer reuse (and, on GPU paths, `J2KMetalBufferPool` hits).
 
-3. **Memory Management**: For long-running applications, consider periodically clearing the buffer pool:
-   ```swift
-   await J2KBufferPool.shared.clear()
-   ```
-
-4. **Lossy vs Lossless**: The optimization only applies to lossless (5/3 filter). For lossy encoding, use the 9/7 filter as usual.
+3. **Lossy vs Lossless**: The optimization only applies to lossless (5/3 filter). For lossy encoding, use the 9/7 filter as usual.
 
 ## Future Work
 
@@ -231,9 +210,8 @@ Potential future enhancements:
 ## References
 
 - ISO/IEC 15444-1 (JPEG 2000 Part 1)
-- `J2KBufferPool.swift` - Buffer pool implementation
 - `J2KDWT1DOptimized.swift` - Optimized DWT implementation
-- `J2KLosslessDecodingBenchmark.swift` - Benchmark suite
+- (`J2KBufferPool.swift` and `J2KLosslessDecodingBenchmark.swift` were Removed in v11.0.0)
 
 ## Changelog
 

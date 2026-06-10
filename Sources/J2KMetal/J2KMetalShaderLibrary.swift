@@ -182,18 +182,6 @@ public enum J2KMetalShaderFunction: String, Sendable, CaseIterable {
     case quantizeDistortionMetric = "j2k_quantize_distortion_metric"
 
     // MARK: - HTJ2K Decode Prototype Shaders
-    /// Dispatch-cost probe — copies per-codeblock input to output and
-    /// touches each byte once. Used to measure the fixed Metal launch
-    /// overhead vs CPU work for a 1-thread-per-codeblock layout.
-    /// Not a real decoder; first-light prototype only.
-    case htDispatchProbe = "j2k_ht_dispatch_probe"
-    /// Symmetric encode-side dispatch-cost probe (v6-alpha6 phase 0.5).
-    /// Models the read+write traffic shape of an eventual GPU HT
-    /// forward entropy encoder: walks per-block coefficients once
-    /// (per-sample classification + payload extraction synthetic),
-    /// writes ~half the sample count's worth of bytes. Empirical
-    /// gate to v6-alpha6 phase 1 (approach B vs E pivot).
-    case htForwardDispatchProbe = "j2k_ht_forward_dispatch_probe"
     /// Per-sample classifier (v6-alpha6 phase 1, approach B).
     /// Per-sample work mirrors `sampleInfo` in HTBlockEncoderConformant —
     /// emits a UInt64 tuple `(sig:1, eQ:7, payload:32)` per sample.
@@ -2427,109 +2415,6 @@ enum J2KMetalShaderSource {
                 break;
             default:
                 distortions[gid] = diff * diff;
-        }
-    }
-
-    // MARK: - HTJ2K Decode Prototype: dispatch-cost probe
-    //
-    // Layout the eventual real decoder will use, exercised here with
-    // trivial work so we can measure the actual GPU launch + memory
-    // marshaling overhead at varying codeblock counts. Each thread
-    // handles one codeblock — the same architecture a full HT decoder
-    // would use (per-codeblock state is independent, the parallelism
-    // unit is the codeblock).
-    //
-    // Inputs:
-    //   blocks       — array of CodeBlockDescriptor, one per codeblock
-    //   codestream   — single concatenated byte pool covering all blocks
-    //   output       — single Int32 pool covering all decoded samples
-    //   blockCount   — number of codeblocks to process
-    //
-    // Per-block work: walk the codeblock's bytes once, sum into a
-    // checksum, and write `width × height` Int32 values to the output
-    // region. Substitutes for the eventual MQ-free HT decode workload.
-
-    struct GPUHTBlockDescriptor {
-        uint dataOffset;    // byte offset into codestream pool
-        uint dataLength;
-        uint outputOffset;  // sample offset into output pool
-        ushort width;
-        ushort height;
-    };
-
-    kernel void j2k_ht_dispatch_probe(
-        device const GPUHTBlockDescriptor* blocks  [[buffer(0)]],
-        device const uchar*                codestream [[buffer(1)]],
-        device int*                        output  [[buffer(2)]],
-        constant uint&                     blockCount [[buffer(3)]],
-        uint tid [[thread_position_in_grid]]
-    ) {
-        if (tid >= blockCount) return;
-        GPUHTBlockDescriptor desc = blocks[tid];
-
-        // Touch every input byte once — models the per-block bit-stream
-        // walk an HT decoder would do. The accumulator stays in a
-        // register so the optimizer cannot eliminate the loop.
-        uint checksum = 0;
-        for (uint i = 0; i < desc.dataLength; i++) {
-            checksum = checksum * 1103515245u + uint(codestream[desc.dataOffset + i]);
-        }
-
-        // Write width × height Int32 outputs — models the eventual
-        // coefficient write traffic.
-        uint sampleCount = uint(desc.width) * uint(desc.height);
-        device int* myOut = output + desc.outputOffset;
-        int v = int(checksum & 0x0FFFu);   // bounded magnitude
-        for (uint i = 0; i < sampleCount; i++) {
-            myOut[i] = ((i & 1u) == 0u) ? v : -v;
-        }
-    }
-
-    // MARK: - HTJ2K Forward Encode Prototype: dispatch-cost probe (v6-alpha6 phase 0.5)
-    //
-    // Symmetric to `j2k_ht_dispatch_probe` (decoder side) but for the
-    // **encode** direction. See J2KShaders.metal for the canonical
-    // documentation; this inline copy stays bit-identical for the
-    // source-compile fallback path (no `default.metallib`).
-
-    struct GPUHTForwardBlockDescriptor {
-        uint coeffOffset;
-        uint outputOffset;
-        uint outputCapacity;
-        ushort width;
-        ushort height;
-    };
-
-    kernel void j2k_ht_forward_dispatch_probe(
-        device const GPUHTForwardBlockDescriptor* blocks       [[buffer(0)]],
-        device const uint*                        coefficients [[buffer(1)]],
-        device uchar*                             output       [[buffer(2)]],
-        constant uint&                            blockCount   [[buffer(3)]],
-        uint tid [[thread_position_in_grid]]
-    ) {
-        if (tid >= blockCount) return;
-        GPUHTForwardBlockDescriptor desc = blocks[tid];
-
-        uint sampleCount = uint(desc.width) * uint(desc.height);
-
-        uint accumulator = 0u;
-        device const uint* myCoeffs = coefficients + desc.coeffOffset;
-        for (uint i = 0; i < sampleCount; i++) {
-            uint v = myCoeffs[i];
-            uint mag = v & 0x7FFFFFFFu;
-            uint isSig = (mag != 0u) ? 1u : 0u;
-            uint leadingZeros = (mag == 0u) ? 32u : clz(mag);
-            accumulator = accumulator * 31u + isSig + (leadingZeros << 1);
-        }
-
-        uint outBytes = sampleCount >> 1;
-        if (outBytes > desc.outputCapacity) {
-            outBytes = desc.outputCapacity;
-        }
-        device uchar* myOut = output + desc.outputOffset;
-        uchar payload = uchar(accumulator & 0xFFu);
-        for (uint i = 0; i < outBytes; i++) {
-            myOut[i] = payload;
         }
     }
 

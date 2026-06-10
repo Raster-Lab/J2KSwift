@@ -8,6 +8,7 @@
 #if canImport(SwiftUI) && os(macOS)
 import SwiftUI
 import J2KCore
+import J2KTestAppCore
 
 /// The About screen showing the application icon, version, copyright, and links.
 ///

@@ -70,7 +70,6 @@ J2KSwift uses GitHub Actions for automated testing, code quality checks, documen
 1. Generates DocC documentation for each module:
    - J2KCore
    - J2KCodec
-   - J2KAccelerate
    - J2KFileFormat
    - JPIP
 2. Creates an index page linking to all modules

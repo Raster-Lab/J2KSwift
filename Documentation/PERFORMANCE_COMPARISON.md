@@ -43,7 +43,7 @@ The benchmarking infrastructure is implemented in:
   `BenchmarkMetrics`, `OpenJPEGBenchmarkRunner`, `PerformanceRegressionDetector`,
   `BenchmarkReportGenerator`
 - **`Tests/PerformanceTests/OpenJPEGBenchmark.swift`** — 80+ automated test cases
-- **`Scripts/benchmark_openjpeg.sh`** — Shell script for local benchmarking
+- **`Scripts/benchmarks/cross_codec_warm_bench.py  # (benchmark_openjpeg.sh removed in v11.0.0)`** — Shell script for local benchmarking
 
 ### Image Sizes
 
@@ -129,14 +129,14 @@ brew install openjpeg
 apt-get install -y libopenjp2-tools
 
 # Run benchmark script
-chmod +x Scripts/benchmark_openjpeg.sh
-./Scripts/benchmark_openjpeg.sh --sizes 512,1024,2048 --runs 5
+chmod +x Scripts/benchmarks/cross_codec_warm_bench.py  # (benchmark_openjpeg.sh removed in v11.0.0)
+./Scripts/benchmarks/cross_codec_warm_bench.py  # (benchmark_openjpeg.sh removed in v11.0.0) --sizes 512,1024,2048 --runs 5
 
 # Custom output directory
-./Scripts/benchmark_openjpeg.sh -o /tmp/my_benchmark_results -s 256,512,1024 -r 10
+./Scripts/benchmarks/cross_codec_warm_bench.py  # (benchmark_openjpeg.sh removed in v11.0.0) -o /tmp/my_benchmark_results -s 256,512,1024 -r 10
 
 # J2KSwift only (no OpenJPEG required)
-./Scripts/benchmark_openjpeg.sh --no-openjpeg
+./Scripts/benchmarks/cross_codec_warm_bench.py  # (benchmark_openjpeg.sh removed in v11.0.0) --no-openjpeg
 ```
 
 ### Programmatic API
@@ -261,7 +261,7 @@ python3 Scripts/compare_performance.py \
 | Limitation | Details |
 |---|---|
 | OpenJPEG comparison requires CLI tools | Tests skip gracefully when `opj_compress`/`opj_decompress` are absent. |
-| GPU benchmarks need Apple Silicon or Vulkan driver | Covered in `J2KMetalTests` and `J2KVulkanTests` respectively. |
+| GPU benchmarks need Apple Silicon or Vulkan driver | Covered in `J2KMetalTests` and `J2KMetalTests  # (J2KVulkanTests removed in v11.0.0)` respectively. |
 | 8192×8192 images excluded from CI suite | Too slow for per-PR CI; run locally with `fullSuite`. |
 | HTJ2K OpenJPEG comparison requires OpenJPEG ≥ 2.5 | Older versions do not support HTJ2K. |
 | Windows benchmarks not yet in CI | Pending Windows CI runner availability. |

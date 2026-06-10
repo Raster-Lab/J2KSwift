@@ -112,7 +112,7 @@ the multi-layer path is a separate branch. The canonical warm
 cross-codec benchmark is run as a **regression check**.
 
 `cross_codec_warm_bench.py --in-proc`, M2, medical-real corpus (mid
-fixtures), median ms. Full results: `benchmark-results-arm64-v10.9.0-20260520.json`.
+fixtures), median ms. Full results: `Documentation/Benchmarks/data/benchmark-results-arm64-v10.9.0-20260520.json`.
 
 Decode wall:
 

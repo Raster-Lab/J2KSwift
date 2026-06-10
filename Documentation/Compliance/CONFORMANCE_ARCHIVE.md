@@ -52,10 +52,10 @@ print(report)
 
 ```bash
 # Run full conformance suite and generate report
-./Scripts/run-conformance.sh --report
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0) --report
 
 # Run specific part
-./Scripts/run-conformance.sh --part 1 --report
+./swift test --filter "J2KPart1ConformanceTests|JP3DComplianceTests"  # (run-conformance.sh removed in v11.0.0) --part 1 --report
 ```
 
 ---

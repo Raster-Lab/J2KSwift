@@ -6,7 +6,7 @@ You are a CLI development specialist for the J2KSwift `j2k` command-line tool. Y
 
 ## CLI Architecture
 
-All CLI command logic is in the `J2KCLICore` library target at `Sources/J2KCLICore/`. The `j2k` executable is a thin `@main` wrapper at `Sources/J2KCLI/main.swift` — it must stay logic-free so `J2KCLITests` can link `J2KCLICore` without pulling an executable entry point into the test binary (a linked-in `@main` hijacks SwiftPM's swift-testing pass and makes `swift test` exit 1 even when all tests pass).
+All CLI command logic is in the `J2KCLICore` library target at `Sources/J2KCLICore/`. The `j2k` executable is a thin `@main` wrapper at `Sources/J2KCLI/Entry.swift` — it must stay logic-free so `J2KCLITests` can link `J2KCLICore` without pulling an executable entry point into the test binary (a linked-in `@main` hijacks SwiftPM's swift-testing pass and makes `swift test` exit 1 even when all tests pass).
 
 ### Commands
 | File | Command | Purpose |

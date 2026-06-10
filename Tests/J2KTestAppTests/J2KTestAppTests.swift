@@ -6,7 +6,8 @@
 //
 
 import XCTest
-@testable import J2KCore
+@testable import J2KTestAppCore
+import J2KCore
 
 // MARK: - Test Category Tests
 

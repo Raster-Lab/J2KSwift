@@ -166,7 +166,6 @@ Or open `Package.swift` in Xcode, select the **J2KTestApp** scheme, and press **
 | **SIMD** | ARM Neon/Intel SSE verification with utilisation gauges |
 | **JPIP** | Progressive streaming canvas with network metrics |
 | **Volumetric** | JP3D slice navigation with encode/decode comparison |
-| **MJ2** | Motion JPEG 2000 frame playback and quality inspection |
 | **Report** | Summary dashboard, trend charts, heatmap, and export |
 
 See [Documentation/TESTING_GUIDE.md](Documentation/TESTING_GUIDE.md) for a complete guide to using J2KTestApp.
@@ -176,13 +175,13 @@ See [Documentation/TESTING_GUIDE.md](Documentation/TESTING_GUIDE.md) for a compl
 J2KSwift provides a modern, safe, and performant JPEG 2000 implementation for Swift applications:
 
 - **Swift 6.2 Native**: Built with Swift 6.2's strict concurrency model — zero data races
-- **Fully Functional**: Complete encoder and decoder pipelines with JP3D, MJ2, and HTJ2K
+- **Fully Functional**: Complete encoder and decoder pipelines with JP3D and HTJ2K
 - **Apple-Silicon-First (v8.0.0+)**: macOS 15+ (M-series), iOS 18+ / iPadOS 18+ (A-series). Cross-platform builds (tvOS, watchOS, visionOS, Linux, Windows) still compile but performance is no longer a measurement criterion.
 - **Standards Compliant**: Full ISO/IEC 15444-4 conformance across Parts 1, 2, 3, 10, and 15
-- **Hardware Accelerated**: ARM Neon SIMD, Intel SSE/AVX, Metal GPU, Vulkan GPU, and Accelerate framework paths where the workload benefits
+- **Hardware Accelerated**: ARM Neon SIMD, Metal GPU, and Accelerate framework paths where the workload benefits
 - **Network Streaming**: JPIP protocol support for efficient 2D and 3D image streaming
 - **Modern API**: Async/await based APIs with comprehensive error handling
-- **Well Documented**: DocC catalogues for 8 modules, 50+ guides, tutorials, and API documentation
+- **Well Documented**: DocC catalogues for 6 modules, 50+ guides, tutorials, and API documentation
 - **High Quality**: broad conformance, interoperability, regression, and GUI test coverage; release claims should cite the exact suite and host that were run
 - **CLI Toolset**: Complete command-line tools for encoding, decoding, transcoding, 3D volumetric, JPIP streaming, batch processing, image comparison, format conversion, validation, and benchmarking
 
@@ -861,17 +860,11 @@ Core types, protocols, and utilities used by all other modules.
 ### J2KCodec
 Encoding and decoding functionality for JPEG 2000 images.
 
-### J2KAccelerate
-Hardware-accelerated operations using platform-specific frameworks (Accelerate on Apple platforms). On non-Apple platforms, software fallback implementations are used automatically.
-
 ### J2KFileFormat
-File format support for JP2, J2K, JPX, and other JPEG 2000 container formats, including Motion JPEG 2000 (MJ2) creation, extraction, and playback.
+File format support for JP2, J2K, JPX, and other JPEG 2000 container formats.
 
 ### J2KMetal
 Metal GPU acceleration for Apple Silicon processors, providing 10–40× performance improvements for wavelet transforms, colour transforms, ROI processing, and quantisation.
-
-### J2KVulkan
-Vulkan GPU compute backend for Linux and Windows platforms, with SPIR-V compute shaders and automatic CPU fallback.
 
 ### JPIP
 JPEG 2000 Interactive Protocol implementation for efficient network streaming, including JP3D 3D streaming with view-dependent progressive delivery.
@@ -917,10 +910,8 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 ### Test Coverage by Module
 - **J2KCore**: public API and conformance coverage
 - **J2KCodec**: codec, ARM Neon, Intel SSE/AVX, and interoperability coverage
-- **J2KFileFormat**: JP2/JPH/JHC/MJ2 file-format coverage
-- **J2KAccelerate**: vDSP/vImage/BLAS integration coverage
+- **J2KFileFormat**: JP2/JPH/JHC file-format coverage
 - **J2KMetal**: GPU compute regression coverage
-- **J2KVulkan**: SPIR-V compute shader coverage where enabled
 - **JPIP**: 2D and 3D streaming coverage
 - **J2K3D**: JP3D volumetric coverage
 
@@ -967,10 +958,8 @@ See [CONFORMANCE_TESTING.md](CONFORMANCE_TESTING.md) for details on testing stra
 
 ### Hardware Acceleration
 - **ARM Neon SIMD**: Vectorised entropy coding, wavelet lifting, colour transforms
-- **Intel SSE/AVX**: SSE4.2 and AVX2 for entropy, wavelets, quantisation
 - **Metal GPU**: Optimised DWT shaders, tile-based dispatch, async compute
-- **Vulkan GPU**: Cross-platform SPIR-V compute for Linux/Windows
-- **Accelerate Framework**: Deep vDSP, vImage, BLAS/LAPACK integration
+- **Accelerate Framework**: vDSP and vImage integration in the codec hot paths
 
 See [PERFORMANCE.md](PERFORMANCE.md), [Documentation/PERFORMANCE_COMPARISON.md](Documentation/PERFORMANCE_COMPARISON.md), and [Documentation/PERFORMANCE_VALIDATION.md](Documentation/PERFORMANCE_VALIDATION.md) for detailed metrics.
 
@@ -1046,10 +1035,10 @@ This project represents a 295-week development effort following a comprehensive 
 | JPIP Protocol | ✅ Complete | 100% | 2D and 3D streaming |
 | Encoder API | ✅ Complete | 100% | ≥1.5–3× faster than OpenJPEG |
 | Decoder API | ✅ Complete | 100% | Full Part 4 conformance |
-| Hardware Accel | ✅ Complete | 100% | Metal, Vulkan, Accelerate, Neon, SSE/AVX |
+| Hardware Accel | ✅ Complete | 100% | Metal, Accelerate, Neon |
 | HTJ2K Codec | ✅ Complete | 100% | ≥3× faster on Apple Silicon |
 | JP3D Volumetric | ✅ Complete | 100% | ISO/IEC 15444-10 compliant |
-| Motion JPEG 2000 | ✅ Complete | 100% | ISO/IEC 15444-3 compliant |
+| Motion JPEG 2000 | ❌ Removed in v11.0.0 | — | MJ2 file-format stack deleted (dead weight) |
 | CLI Tools | ✅ Complete | 100% | Dual British/American spelling |
 | **CLI Enhancement** | ✅ Complete | 193 tests | 8 new commands, 3D/JPIP/batch (Phase 21) |
 | Conformance | ✅ Complete | 304 tests | Parts 1, 2, 3, 10, 15 |
@@ -1057,7 +1046,7 @@ This project represents a 295-week development effort following a comprehensive 
 | **Multi-Spectral JP3D** | ✅ Complete | 30+ tests | Spectral bands, encoder, decoder (Phase 19) |
 | **Vulkan JP3D DWT** | ✅ Complete | 15+ tests | 3D DWT with spectral axis (Phase 19) |
 | **JPEG XS Exploration** | ✅ Scaffolded | 10+ tests | ISO/IEC 21122 exploration types (Phase 19) |
-| **JPEG XS Codec** | ✅ Complete | 52 tests | J2KXS module, full pipeline (Phase 20) |
+| **JPEG XS Codec** | ❌ Removed in v11.0.0 | — | J2KXS module deleted (dead weight) |
 
 ---
 

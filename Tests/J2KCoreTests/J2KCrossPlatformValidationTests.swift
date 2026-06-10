@@ -12,89 +12,6 @@ import XCTest
 @testable import J2KCore
 
 final class J2KCrossPlatformValidationTests: XCTestCase {
-    // MARK: - Platform Detection Tests
-
-    func testPlatformDetection() throws {
-        let os = J2KPlatformInfo.currentOS
-        XCTAssertNotEqual(os, .unknown, "Should detect current OS")
-
-        // Verify the platform matches compile-time checks
-        #if os(macOS)
-        XCTAssertEqual(os, .macOS)
-        #elseif os(iOS)
-        XCTAssertEqual(os, .iOS)
-        #elseif os(tvOS)
-        XCTAssertEqual(os, .tvOS)
-        #elseif os(watchOS)
-        XCTAssertEqual(os, .watchOS)
-        #elseif os(Linux)
-        XCTAssertEqual(os, .linux)
-        #elseif os(Windows)
-        XCTAssertEqual(os, .windows)
-        #endif
-    }
-
-    func testArchitectureDetection() throws {
-        let arch = J2KPlatformInfo.currentArchitecture
-        XCTAssertNotEqual(arch, .unknown, "Should detect current architecture")
-
-        #if arch(arm64)
-        XCTAssertEqual(arch, .arm64)
-        #elseif arch(x86_64)
-        XCTAssertEqual(arch, .x86_64)
-        #endif
-    }
-
-    func testHardwareAccelerationDetection() throws {
-        let hasAcceleration = J2KPlatformInfo.hasHardwareAcceleration
-
-        #if canImport(Accelerate)
-        XCTAssertTrue(hasAcceleration, "Should detect Accelerate framework")
-        #else
-        XCTAssertFalse(hasAcceleration, "Should not detect Accelerate on this platform")
-        #endif
-    }
-
-    func testApplePlatformDetection() throws {
-        let isApple = J2KPlatformInfo.isApplePlatform
-
-        #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-        XCTAssertTrue(isApple, "Should be detected as Apple platform")
-        #else
-        XCTAssertFalse(isApple, "Should not be detected as Apple platform")
-        #endif
-    }
-
-    func testPlatformSummary() throws {
-        let summary = J2KPlatformInfo.platformSummary()
-
-        XCTAssertTrue(summary.contains("J2KSwift Platform Info"))
-        XCTAssertTrue(summary.contains("OS:"))
-        XCTAssertTrue(summary.contains("Architecture:"))
-        XCTAssertTrue(summary.contains("Apple Platform:"))
-        XCTAssertTrue(summary.contains("Hardware Acceleration:"))
-        XCTAssertTrue(summary.contains("Pointer Size:"))
-        XCTAssertTrue(summary.contains("Byte Order:"))
-    }
-
-    func testPointerSize() throws {
-        let pointerSize = J2KPlatformInfo.pointerSize
-        // All supported platforms are 64-bit
-        XCTAssertEqual(pointerSize, 8, "Expected 64-bit pointer size")
-    }
-
-    func testByteOrderDetection() throws {
-        // Verify byte order detection is accessible and returns a valid value
-        let isLittleEndian = J2KPlatformInfo.isLittleEndian
-        // On x86_64 and arm64, we expect little-endian
-        #if arch(x86_64) || arch(arm64)
-        XCTAssertTrue(isLittleEndian, "x86_64 and arm64 should be little-endian")
-        #else
-        // Just verify the property returns without error
-        XCTAssertTrue(isLittleEndian || !isLittleEndian)
-        #endif
-    }
-
     // MARK: - Cross-Platform Data Consistency Tests
 
     func testInt32RepresentationConsistency() throws {
@@ -182,49 +99,6 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
         let mae = J2KErrorMetrics.maximumAbsoluteError(reference: reference, test: test)
         XCTAssertNotNil(mae)
         XCTAssertEqual(mae!, 2, "MAE should be consistent across platforms")
-    }
-
-    // MARK: - Cross-Platform Image Generation Consistency
-
-    func testImageGenerationConsistentAcrossPlatforms() throws {
-        let pixels = J2KISOTestSuiteLoader.generateTestImage(
-            width: 8, height: 8, components: 1, bitDepth: 8
-        )
-
-        // Verify specific known values that should be identical on all platforms
-        // First pixel of first row (x=0, y=0) should be 0
-        XCTAssertEqual(pixels[0], 0, "First pixel should be 0")
-
-        // Last pixel of first row (x=7, y=0) should be 255
-        XCTAssertEqual(pixels[7], 255, "Last pixel in first row should be 255")
-
-        // First pixel of last row (x=0, y=7) should be 0 (horizontal gradient for component 0)
-        XCTAssertEqual(pixels[7 * 8], 0, "First pixel of last row should be 0")
-    }
-
-    func testImageGenerationMultiComponentConsistency() throws {
-        let pixels = J2KISOTestSuiteLoader.generateTestImage(
-            width: 4, height: 4, components: 3, bitDepth: 8
-        )
-
-        // Total pixels: 4 * 4 * 3 = 48
-        XCTAssertEqual(pixels.count, 48)
-
-        // Component 0: horizontal gradient
-        // Component 1: vertical gradient
-        // Component 2: diagonal average
-
-        // Component 0, first pixel (x=0, y=0): 0
-        XCTAssertEqual(pixels[0], 0)
-
-        // Component 1, first pixel (component offset = 16, x=0, y=0): 0
-        XCTAssertEqual(pixels[16], 0)
-
-        // All values should be deterministic
-        let pixels2 = J2KISOTestSuiteLoader.generateTestImage(
-            width: 4, height: 4, components: 3, bitDepth: 8
-        )
-        XCTAssertEqual(pixels, pixels2, "Multi-component generation should be deterministic")
     }
 
     // MARK: - Cross-Platform J2KImage Consistency
@@ -352,56 +226,7 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
         XCTAssertTrue(tolerance)
     }
 
-    // MARK: - Platform-Specific Feature Availability
-
-    func testAccelerateAvailability() throws {
-        #if canImport(Accelerate)
-        // On Apple platforms, hardware acceleration should be available
-        XCTAssertTrue(J2KPlatformInfo.hasHardwareAcceleration)
-        XCTAssertTrue(J2KPlatformInfo.isApplePlatform)
-        #else
-        // On non-Apple platforms, no hardware acceleration
-        XCTAssertFalse(J2KPlatformInfo.hasHardwareAcceleration)
-        // Should still function correctly without it
-        let ref: [Int32] = [100, 200]
-        let test: [Int32] = [101, 199]
-        let mse = J2KErrorMetrics.meanSquaredError(reference: ref, test: test)
-        XCTAssertNotNil(mse, "Error metrics should work without hardware acceleration")
-        #endif
-    }
-
     // MARK: - Cross-Platform Conformance Validator Consistency
-
-    func testConformanceValidatorConsistency() throws {
-        let reference = J2KISOTestSuiteLoader.generateTestImage(
-            width: 16, height: 16, components: 1, bitDepth: 8
-        )
-
-        let vector = J2KTestVector(
-            name: "cross_platform_test",
-            description: "Cross-platform validation test",
-            codestream: Data(),
-            referenceImage: reference,
-            width: 16,
-            height: 16,
-            components: 1,
-            bitDepth: 8,
-            maxAllowableError: 0
-        )
-
-        // Perfect match should always pass regardless of platform
-        let result = J2KConformanceValidator.validate(
-            decoded: reference,
-            against: vector
-        )
-
-        XCTAssertTrue(result.passed,
-                      "Perfect match validation should pass on all platforms")
-        XCTAssertNil(result.errorMessage)
-        XCTAssertEqual(result.mse!, 0.0, accuracy: 0.0001)
-        XCTAssertEqual(result.mae!, 0)
-        XCTAssertEqual(result.psnr!, Double.infinity)
-    }
 
     func testConformanceReportConsistency() throws {
         let reference: [Int32] = [100, 200, 150, 50]
@@ -429,26 +254,5 @@ final class J2KCrossPlatformValidationTests: XCTestCase {
         // Report format should be consistent across platforms
         XCTAssertTrue(report.contains("1/1 tests passed"))
         XCTAssertTrue(report.contains("100.0%"))
-    }
-
-    // MARK: - Operating System Enum Tests
-
-    func testOperatingSystemRawValues() throws {
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.macOS.rawValue, "macOS")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.iOS.rawValue, "iOS")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.tvOS.rawValue, "tvOS")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.watchOS.rawValue, "watchOS")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.visionOS.rawValue, "visionOS")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.linux.rawValue, "Linux")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.windows.rawValue, "Windows")
-        XCTAssertEqual(J2KPlatformInfo.OperatingSystem.unknown.rawValue, "Unknown")
-    }
-
-    func testArchitectureRawValues() throws {
-        XCTAssertEqual(J2KPlatformInfo.Architecture.arm64.rawValue, "arm64")
-        XCTAssertEqual(J2KPlatformInfo.Architecture.x86_64.rawValue, "x86_64")
-        XCTAssertEqual(J2KPlatformInfo.Architecture.arm.rawValue, "arm")
-        XCTAssertEqual(J2KPlatformInfo.Architecture.i386.rawValue, "i386")
-        XCTAssertEqual(J2KPlatformInfo.Architecture.unknown.rawValue, "Unknown")
     }
 }
