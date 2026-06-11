@@ -36,7 +36,11 @@ public enum J2KGPUForward53Telemetry {
         /// `J2K_GPU_FORWARD_53` env var unset (and
         /// `_gpuForward53Enabled = false` programmatically).
         case envDisabled        = "env-disabled"
-        /// Metal not available on this platform / build.
+        /// Metal not available on this platform / build. v11.0.1:
+        /// only recorded when the flag + size gates pass — the
+        /// availability probe (`MTLCreateSystemDefaultDevice()`,
+        /// ~40-75 ms cold per process) is lazy, so sub-threshold
+        /// skips report a size reason instead.
         case metalUnavailable   = "metal-unavailable"
         /// `width * height < _gpuForward53PixelThreshold` (4 MP
         /// production default).

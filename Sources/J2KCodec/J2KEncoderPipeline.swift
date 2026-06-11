@@ -2875,7 +2875,6 @@ struct EncoderPipeline: Sendable {
                         // the reason for any non-fire so policy tests
                         // can assert routing behaviour without races
                         // on the static flag.
-                        let metalAvailable = J2KMetalDWT.isAvailable
                         let pixels = width * height
                         let pixelOK = pixels >= Self._gpuForward53PixelThreshold
                         // v10.25: multi-tile per-tile dispatches carry
@@ -2885,10 +2884,22 @@ struct EncoderPipeline: Sendable {
                         // 2026-06-10 A/B that rejected excluding MG 2x2).
                         let multiTileOK = !isMultiTilePerTile
                             || pixels >= Self._gpuForward53MultiTilePerTilePixelThreshold
-                        let useGPUForward = Self._gpuForward53Enabled
-                            && metalAvailable
+                        // v11.0.1 — probe Metal availability ONLY when the
+                        // flag + size gates would actually route this DWT
+                        // to the GPU (the decode-side v8 Phase 1 reorder,
+                        // applied to encode). `J2KMetalDWT.isAvailable`
+                        // calls `MTLCreateSystemDefaultDevice()` behind a
+                        // static cache — ~40-75 ms in a fresh process on
+                        // Apple M2 — so probing it unconditionally gave
+                        // one-shot sub-threshold `j2k encode` a ~75 ms
+                        // wall floor even at 174×192 (v11.0.0 cold-start
+                        // decomposition), while cold decode's floor was
+                        // ~10 ms.
+                        let flagAndSizeOK = Self._gpuForward53Enabled
                             && pixelOK
                             && multiTileOK
+                        let metalAvailable = flagAndSizeOK && J2KMetalDWT.isAvailable
+                        let useGPUForward = flagAndSizeOK && metalAvailable
 
                         if useGPUForward {
                             // v6-alpha5 phase 3 — share the
@@ -2969,18 +2980,23 @@ struct EncoderPipeline: Sendable {
                         } else {
                             // Record skip reason for Phase 9 policy
                             // tests / cross-device tuning telemetry.
-                            // Order matters: env-disabled wins over
-                            // metal-unavailable wins over below-
-                            // threshold (most-actionable to least).
+                            // v11.0.1 — size reasons now outrank
+                            // metal-unavailable: availability is only
+                            // probed once the flag + size gates pass
+                            // (see the lazy-probe comment above), so a
+                            // sub-threshold skip can no longer report
+                            // `.metalUnavailable`. On Metal-capable
+                            // hosts (all production Apple Silicon) the
+                            // recorded reasons are unchanged.
                             let reason: J2KGPUForward53Telemetry.SkipReason
                             if !Self._gpuForward53Enabled {
                                 reason = .envDisabled
-                            } else if !metalAvailable {
-                                reason = .metalUnavailable
                             } else if pixelOK && !multiTileOK {
                                 reason = .multiTilePerTile
-                            } else {
+                            } else if !pixelOK {
                                 reason = .belowThreshold
+                            } else {
+                                reason = .metalUnavailable
                             }
                             J2KGPUForward53Telemetry.recordCPUFire(
                                 reason: reason, width: width, height: height,
