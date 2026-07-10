@@ -55,6 +55,80 @@ final class J2KStrictCrossCodecValidationTests: XCTestCase {
         }
     }
 
+    private func makePatternImage(width: Int, height: Int, components: Int) -> J2KImage {
+        let pixelCount = width * height
+        var built: [J2KComponent] = []
+        built.reserveCapacity(components)
+        for c in 0..<components {
+            var data = Data(count: pixelCount)
+            for i in 0..<pixelCount {
+                data[i] = UInt8((i &* 37 &+ c &* 53 &+ (i >> 3)) & 0xFF)
+            }
+            built.append(J2KComponent(
+                index: c, bitDepth: 8, signed: false,
+                width: width, height: height, data: data
+            ))
+        }
+        return J2KImage(width: width, height: height, components: built)
+    }
+
+    private func assertImageComponentsEqual(_ lhs: J2KImage, _ rhs: J2KImage, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(lhs.width, rhs.width, file: file, line: line)
+        XCTAssertEqual(lhs.height, rhs.height, file: file, line: line)
+        XCTAssertEqual(lhs.components.count, rhs.components.count, file: file, line: line)
+        for i in 0..<lhs.components.count {
+            XCTAssertEqual(lhs.components[i].data, rhs.components[i].data, "Component \(i) mismatch", file: file, line: line)
+        }
+    }
+
+    func testEncodeGPULosslessRoundTripIsBitExactForGrayscale() async throws {
+        let image = makePatternImage(width: 128, height: 128, components: 1)
+        let cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: false,
+            useReversibleFilter: true)
+
+        let codestream = try await J2KEncoder(encodingConfiguration: cfg).encodeGPU(image)
+        let decoded = try await J2KDecoder().decode(codestream)
+        assertImageComponentsEqual(decoded, image)
+    }
+
+    func testEncodeGPULosslessRoundTripIsBitExactForRGB() async throws {
+        let image = makePatternImage(width: 128, height: 128, components: 3)
+        let cfg = J2KEncodingConfiguration(
+            quality: 1.0, lossless: true,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: false,
+            useReversibleFilter: true)
+
+        let codestream = try await J2KEncoder(encodingConfiguration: cfg).encodeGPU(image)
+        let decoded = try await J2KDecoder().decode(codestream)
+        assertImageComponentsEqual(decoded, image)
+    }
+
+    func testEncodeGPULossySizeScalesWithComponentCount() async throws {
+        let single = makePatternImage(width: 256, height: 256, components: 1)
+        let triple = makePatternImage(width: 256, height: 256, components: 3)
+
+        var cfg = J2KEncodingConfiguration(
+            quality: 0.1, lossless: false,
+            decompositionLevels: 5, qualityLayers: 1,
+            progressionOrder: .lrcp, useHTJ2K: false,
+            useReversibleFilter: false)
+        cfg.bitrateMode = .constantBitrate(bitsPerPixel: 0.5)
+
+        let encoder = J2KEncoder(encodingConfiguration: cfg)
+        let gpuSingle = try await encoder.encodeGPU(single)
+        let gpuTriple = try await encoder.encodeGPU(triple)
+        let cpuTriple = try await encoder.encode(triple)
+
+        XCTAssertGreaterThan(gpuTriple.count, gpuSingle.count * 2,
+                             "3-component lossy encodeGPU output should scale with component count")
+        XCTAssertGreaterThan(Double(gpuTriple.count), Double(cpuTriple.count) * 0.8,
+                             "GPU lossy 3-component output should stay close to CPU output size")
+    }
+
     /// v5.34.0 consistency: CPU `encode()` and GPU `encodeGPU()` must
     /// produce the SAME bytes when given the same `.constantBitrate(bpp)`
     /// on the auto-promote-eligible path (HT-conformant lossy 9/7

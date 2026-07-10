@@ -1883,7 +1883,8 @@ struct EncoderPipeline: Sendable {
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
         let layers = try applyRateControl(
-            codeBlocks: codeBlocks, totalPixels: image.width * image.height
+            codeBlocks: codeBlocks, totalPixels: image.width * image.height,
+            componentCount: image.components.count
         )
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
         do {
@@ -1912,12 +1913,18 @@ struct EncoderPipeline: Sendable {
 
     /// GPU-accelerated wavelet transform using Metal.
     ///
-    /// Uses Metal GPU for both CDF 9/7 irreversible and Le Gall 5/3 reversible wavelet transforms.
-    /// Falls back to CPU when Metal is unavailable or for custom/arbitrary wavelet kernels.
+    /// Uses Metal GPU for CDF 9/7 irreversible wavelet transforms.
+    /// Falls back to CPU for reversible 5/3, when Metal is unavailable, or for custom/arbitrary kernels.
     private func applyWaveletTransformGPU(
         _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int
     ) async throws -> ([[SubbandInfo]], Int) {
+        // Keep reversible 5/3 path on CPU for exact integer-lossless behavior.
+        if config.useReversibleFilter {
+            return try await applyWaveletTransform(components, floatComponents: floatComponents,
+                                              width: width, height: height)
+        }
+
         // Fall back to CPU for custom wavelet kernels only
         if case .arbitrary = config.waveletKernelConfiguration {
             return try await applyWaveletTransform(components, floatComponents: floatComponents,
@@ -6072,7 +6079,7 @@ struct EncoderPipeline: Sendable {
     /// Applies rate control and quality layer formation.
     private func applyRateControl(
         codeBlocks: [J2KCodeBlock], totalPixels: Int,
-        componentCount: Int = 1
+        componentCount: Int
     ) throws -> [QualityLayer] {
         guard !codeBlocks.isEmpty else {
             return [QualityLayer(index: 0)]

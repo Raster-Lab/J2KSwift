@@ -617,7 +617,9 @@ public actor J2KMetalColorTransform {
         let queue = try await metalDevice.commandQueue()
         let device = queue.device
         let count = red.count
-        let bufferSize = count * MemoryLayout<Float>.stride
+        let usesIntegerRCT = configuration.transformType == .rct
+        let elementStride = usesIntegerRCT ? MemoryLayout<Int32>.stride : MemoryLayout<Float>.stride
+        let bufferSize = count * elementStride
 
         // Allocate buffers directly to avoid actor boundary crossing
         // after commandBuffer.completed() which causes thread pool exhaustion
@@ -638,14 +640,29 @@ public actor J2KMetalColorTransform {
         let c1Buffer = try makeBuffer(size: bufferSize)
         let c2Buffer = try makeBuffer(size: bufferSize)
 
-        red.withUnsafeBytes { src in
-            rBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
-        }
-        green.withUnsafeBytes { src in
-            gBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
-        }
-        blue.withUnsafeBytes { src in
-            bBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        if usesIntegerRCT {
+            let redInt = red.map(floatToInt32Saturating)
+            let greenInt = green.map(floatToInt32Saturating)
+            let blueInt = blue.map(floatToInt32Saturating)
+            redInt.withUnsafeBytes { src in
+                rBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            greenInt.withUnsafeBytes { src in
+                gBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            blueInt.withUnsafeBytes { src in
+                bBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        } else {
+            red.withUnsafeBytes { src in
+                rBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            green.withUnsafeBytes { src in
+                gBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            blue.withUnsafeBytes { src in
+                bBuffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
         }
 
         let shaderFunc: J2KMetalShaderFunction
@@ -680,9 +697,23 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
-        let c0 = readFloatsFromSharedBuffer(c0Buffer, count: count)
-        let c1 = readFloatsFromSharedBuffer(c1Buffer, count: count)
-        let c2 = readFloatsFromSharedBuffer(c2Buffer, count: count)
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Color forward GPU dispatch failed: \(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let c0: [Float]
+        let c1: [Float]
+        let c2: [Float]
+        if usesIntegerRCT {
+            c0 = readInt32sFromSharedBuffer(c0Buffer, count: count).map(Float.init)
+            c1 = readInt32sFromSharedBuffer(c1Buffer, count: count).map(Float.init)
+            c2 = readInt32sFromSharedBuffer(c2Buffer, count: count).map(Float.init)
+        } else {
+            c0 = readFloatsFromSharedBuffer(c0Buffer, count: count)
+            c1 = readFloatsFromSharedBuffer(c1Buffer, count: count)
+            c2 = readFloatsFromSharedBuffer(c2Buffer, count: count)
+        }
 
         // Buffers released via ARC when they go out of scope
 
@@ -701,7 +732,9 @@ public actor J2KMetalColorTransform {
         let queue = try await metalDevice.commandQueue()
         let device = queue.device
         let count = component0.count
-        let bufferSize = count * MemoryLayout<Float>.stride
+        let usesIntegerRCT = configuration.transformType == .rct
+        let elementStride = usesIntegerRCT ? MemoryLayout<Int32>.stride : MemoryLayout<Float>.stride
+        let bufferSize = count * elementStride
 
         // Allocate buffers directly to avoid actor boundary crossing
         // after commandBuffer.completed() which causes thread pool exhaustion
@@ -722,14 +755,29 @@ public actor J2KMetalColorTransform {
         let gBuffer = try makeBuffer(size: bufferSize)
         let bBuffer = try makeBuffer(size: bufferSize)
 
-        component0.withUnsafeBytes { src in
-            c0Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
-        }
-        component1.withUnsafeBytes { src in
-            c1Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
-        }
-        component2.withUnsafeBytes { src in
-            c2Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+        if usesIntegerRCT {
+            let c0Int = component0.map(floatToInt32Saturating)
+            let c1Int = component1.map(floatToInt32Saturating)
+            let c2Int = component2.map(floatToInt32Saturating)
+            c0Int.withUnsafeBytes { src in
+                c0Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            c1Int.withUnsafeBytes { src in
+                c1Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            c2Int.withUnsafeBytes { src in
+                c2Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+        } else {
+            component0.withUnsafeBytes { src in
+                c0Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            component1.withUnsafeBytes { src in
+                c1Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
+            component2.withUnsafeBytes { src in
+                c2Buffer.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
+            }
         }
 
         let shaderFunc: J2KMetalShaderFunction
@@ -764,9 +812,23 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
-        let r = readFloatsFromSharedBuffer(rBuffer, count: count)
-        let g = readFloatsFromSharedBuffer(gBuffer, count: count)
-        let b = readFloatsFromSharedBuffer(bBuffer, count: count)
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Color inverse GPU dispatch failed: \(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+
+        let r: [Float]
+        let g: [Float]
+        let b: [Float]
+        if usesIntegerRCT {
+            r = readInt32sFromSharedBuffer(rBuffer, count: count).map(Float.init)
+            g = readInt32sFromSharedBuffer(gBuffer, count: count).map(Float.init)
+            b = readInt32sFromSharedBuffer(bBuffer, count: count).map(Float.init)
+        } else {
+            r = readFloatsFromSharedBuffer(rBuffer, count: count)
+            g = readFloatsFromSharedBuffer(gBuffer, count: count)
+            b = readFloatsFromSharedBuffer(bBuffer, count: count)
+        }
 
         // Buffers released via ARC when they go out of scope
 
@@ -951,5 +1013,24 @@ private func readFloatsFromSharedBuffer(_ buffer: any MTLBuffer, count: Int) -> 
             from: ptr.assumingMemoryBound(to: Float.self), count: count)
         initialized = count
     }
+}
+
+private func readInt32sFromSharedBuffer(_ buffer: any MTLBuffer, count: Int) -> [Int32] {
+    guard count > 0 else { return [] }
+    let ptr = buffer.contents()
+    return [Int32](unsafeUninitializedCapacity: count) { buf, initialized in
+        buf.baseAddress!.update(
+            from: ptr.assumingMemoryBound(to: Int32.self), count: count)
+        initialized = count
+    }
+}
+
+@inline(__always)
+private func floatToInt32Saturating(_ value: Float) -> Int32 {
+    if value.isNaN { return 0 }
+    let rounded = value.rounded(.toNearestOrEven)
+    if rounded >= Float(Int32.max) { return Int32.max }
+    if rounded <= Float(Int32.min) { return Int32.min }
+    return Int32(rounded)
 }
 #endif
