@@ -3977,6 +3977,11 @@ public actor J2KMetalDWT {
         enc1.endEncoding()
         cb1.commit()
         await cb1.completed()
+        if cb1.status == .error {
+            throw J2KError.internalError(
+                "Forward 9/7 GPU dispatch failed: "
+                    + "\(cb1.error?.localizedDescription ?? "(no description)")")
+        }
 
         // Step 2 & 3: Vertical DWT on lowpass → LL, LH AND highpass → HL, HH
         guard let cb2 = queue.makeCommandBuffer(),
@@ -4014,6 +4019,11 @@ public actor J2KMetalDWT {
         enc2.endEncoding()
         cb2.commit()
         await cb2.completed()
+        if cb2.status == .error {
+            throw J2KError.internalError(
+                "Forward 9/7 GPU dispatch failed: "
+                    + "\(cb2.error?.localizedDescription ?? "(no description)")")
+        }
 
         // Read results
         let ll = readFloatArray(from: llBuffer, elementCount: halfW * halfH)
@@ -4155,6 +4165,11 @@ public actor J2KMetalDWT {
         enc1.endEncoding()
         cb1.commit()
         await cb1.completed()
+        if cb1.status == .error {
+            throw J2KError.internalError(
+                "Inverse 9/7 GPU dispatch failed: "
+                    + "\(cb1.error?.localizedDescription ?? "(no description)")")
+        }
 
         // Step 2: Inverse horizontal DWT — hLow + hHigh → output
         guard let cb2 = queue.makeCommandBuffer(),
@@ -4176,6 +4191,11 @@ public actor J2KMetalDWT {
         enc2.endEncoding()
         cb2.commit()
         await cb2.completed()
+        if cb2.status == .error {
+            throw J2KError.internalError(
+                "Inverse 9/7 GPU dispatch failed: "
+                    + "\(cb2.error?.localizedDescription ?? "(no description)")")
+        }
 
         // Read result
         let result = readFloatArray(from: outputBuffer, elementCount: width * height)

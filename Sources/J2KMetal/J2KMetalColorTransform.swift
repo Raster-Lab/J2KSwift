@@ -114,6 +114,28 @@ public struct J2KMetalColorTransformResult: Sendable {
     }
 }
 
+/// Integer result for the reversible colour transform. RCT is defined over
+/// integer samples; keeping this API integer prevents a byte-identical
+/// transform from being corrupted by Float/Int32 bit reinterpretation.
+public struct J2KMetalIntegerColorTransformResult: Sendable {
+    public let component0: [Int32]
+    public let component1: [Int32]
+    public let component2: [Int32]
+    public let transformType: J2KMetalColorTransformType
+    public let usedGPU: Bool
+
+    public init(
+        component0: [Int32], component1: [Int32], component2: [Int32],
+        transformType: J2KMetalColorTransformType, usedGPU: Bool
+    ) {
+        self.component0 = component0
+        self.component1 = component1
+        self.component2 = component2
+        self.transformType = transformType
+        self.usedGPU = usedGPU
+    }
+}
+
 // MARK: - Colour Transform Statistics
 
 /// Performance statistics for Metal colour transform operations.
@@ -328,6 +350,18 @@ public actor J2KMetalColorTransform {
                 "All components must have the same length"
             )
         }
+        if configuration.transformType == .rct {
+            let integer = try await forwardRCT(
+                red: red.map { Int32($0) },
+                green: green.map { Int32($0) },
+                blue: blue.map { Int32($0) },
+                backend: backend)
+            return J2KMetalColorTransformResult(
+                component0: integer.component0.map(Float.init),
+                component1: integer.component1.map(Float.init),
+                component2: integer.component2.map(Float.init),
+                transformType: .rct, usedGPU: integer.usedGPU)
+        }
 
         let startTime = currentTime()
         _statistics.totalOperations += 1
@@ -348,6 +382,40 @@ public actor J2KMetalColorTransform {
             _statistics.cpuOperations += 1
         }
 
+        _statistics.totalProcessingTime += currentTime() - startTime
+        return result
+    }
+
+    /// Performs the reversible colour transform over native Int32 samples.
+    /// This is the only valid representation for RCT; the Float API is for
+    /// ICT and must not be used as an integer-buffer transport.
+    public func forwardRCT(
+        red: [Int32], green: [Int32], blue: [Int32],
+        backend: J2KMetalColorTransformBackend = .auto
+    ) async throws -> J2KMetalIntegerColorTransformResult {
+        guard configuration.transformType == .rct else {
+            throw J2KError.invalidParameter("forwardRCT requires the RCT configuration")
+        }
+        let count = red.count
+        guard !red.isEmpty else {
+            throw J2KError.invalidParameter("Input components must not be empty")
+        }
+        guard green.count == count, blue.count == count else {
+            throw J2KError.invalidParameter("All components must have the same length")
+        }
+
+        let startTime = currentTime()
+        _statistics.totalOperations += 1
+        _statistics.totalSamplesProcessed += count
+        let effective = effectiveBackend(sampleCount: count, backend: backend)
+        let result: J2KMetalIntegerColorTransformResult
+        if effective == .gpu {
+            result = try await forwardRCTGPU(red: red, green: green, blue: blue)
+            _statistics.gpuOperations += 1
+        } else {
+            result = forwardRCTCPU(red: red, green: green, blue: blue)
+            _statistics.cpuOperations += 1
+        }
         _statistics.totalProcessingTime += currentTime() - startTime
         return result
     }
@@ -381,6 +449,18 @@ public actor J2KMetalColorTransform {
                 "All components must have the same length"
             )
         }
+        if configuration.transformType == .rct {
+            let integer = try await inverseRCT(
+                component0: component0.map { Int32($0) },
+                component1: component1.map { Int32($0) },
+                component2: component2.map { Int32($0) },
+                backend: backend)
+            return J2KMetalColorTransformResult(
+                component0: integer.component0.map(Float.init),
+                component1: integer.component1.map(Float.init),
+                component2: integer.component2.map(Float.init),
+                transformType: .rct, usedGPU: integer.usedGPU)
+        }
 
         let startTime = currentTime()
         _statistics.totalOperations += 1
@@ -401,6 +481,41 @@ public actor J2KMetalColorTransform {
             _statistics.cpuOperations += 1
         }
 
+        _statistics.totalProcessingTime += currentTime() - startTime
+        return result
+    }
+
+    /// Performs the inverse reversible colour transform over native Int32
+    /// samples. The integer representation is preserved through readback.
+    public func inverseRCT(
+        component0: [Int32], component1: [Int32], component2: [Int32],
+        backend: J2KMetalColorTransformBackend = .auto
+    ) async throws -> J2KMetalIntegerColorTransformResult {
+        guard configuration.transformType == .rct else {
+            throw J2KError.invalidParameter("inverseRCT requires the RCT configuration")
+        }
+        let count = component0.count
+        guard !component0.isEmpty else {
+            throw J2KError.invalidParameter("Input components must not be empty")
+        }
+        guard component1.count == count, component2.count == count else {
+            throw J2KError.invalidParameter("All components must have the same length")
+        }
+
+        let startTime = currentTime()
+        _statistics.totalOperations += 1
+        _statistics.totalSamplesProcessed += count
+        let effective = effectiveBackend(sampleCount: count, backend: backend)
+        let result: J2KMetalIntegerColorTransformResult
+        if effective == .gpu {
+            result = try await inverseRCTGPU(
+                component0: component0, component1: component1, component2: component2)
+            _statistics.gpuOperations += 1
+        } else {
+            result = inverseRCTCPU(
+                component0: component0, component1: component1, component2: component2)
+            _statistics.cpuOperations += 1
+        }
         _statistics.totalProcessingTime += currentTime() - startTime
         return result
     }
@@ -522,6 +637,38 @@ public actor J2KMetalColorTransform {
             transformType: configuration.transformType,
             usedGPU: false
         )
+    }
+
+    private func forwardRCTCPU(
+        red: [Int32], green: [Int32], blue: [Int32]
+    ) -> J2KMetalIntegerColorTransformResult {
+        var y = [Int32](repeating: 0, count: red.count)
+        var u = [Int32](repeating: 0, count: red.count)
+        var v = [Int32](repeating: 0, count: red.count)
+        for i in red.indices {
+            y[i] = (red[i] &+ (green[i] &<< 1) &+ blue[i]) >> 2
+            u[i] = blue[i] &- green[i]
+            v[i] = red[i] &- green[i]
+        }
+        return J2KMetalIntegerColorTransformResult(
+            component0: y, component1: u, component2: v,
+            transformType: .rct, usedGPU: false)
+    }
+
+    private func inverseRCTCPU(
+        component0: [Int32], component1: [Int32], component2: [Int32]
+    ) -> J2KMetalIntegerColorTransformResult {
+        var r = [Int32](repeating: 0, count: component0.count)
+        var g = [Int32](repeating: 0, count: component0.count)
+        var b = [Int32](repeating: 0, count: component0.count)
+        for i in component0.indices {
+            g[i] = component0[i] &- ((component1[i] &+ component2[i]) >> 2)
+            r[i] = component2[i] &+ g[i]
+            b[i] = component1[i] &+ g[i]
+        }
+        return J2KMetalIntegerColorTransformResult(
+            component0: r, component1: g, component2: b,
+            transformType: .rct, usedGPU: false)
     }
 
     private func applyNLTCPU(
@@ -679,6 +826,11 @@ public actor J2KMetalColorTransform {
 
         commandBuffer.commit()
         await commandBuffer.completed()
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Forward colour-transform GPU dispatch failed: "
+                    + "\(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
 
         let c0 = readFloatsFromSharedBuffer(c0Buffer, count: count)
         let c1 = readFloatsFromSharedBuffer(c1Buffer, count: count)
@@ -691,6 +843,64 @@ public actor J2KMetalColorTransform {
             transformType: configuration.transformType,
             usedGPU: true
         )
+    }
+
+    private func forwardRCTGPU(
+        red: [Int32], green: [Int32], blue: [Int32]
+    ) async throws -> J2KMetalIntegerColorTransformResult {
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let count = red.count
+        let byteCount = count * MemoryLayout<Int32>.stride
+        func makeBuffer() throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(byteCount, 1), options: .storageModeShared) else {
+                throw J2KError.internalError("Failed to allocate RCT Int32 Metal buffer")
+            }
+            return buffer
+        }
+        let rBuffer = try makeBuffer()
+        let gBuffer = try makeBuffer()
+        let bBuffer = try makeBuffer()
+        let yBuffer = try makeBuffer()
+        let uBuffer = try makeBuffer()
+        let vBuffer = try makeBuffer()
+        red.withUnsafeBytes { rBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        green.withUnsafeBytes { gBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        blue.withUnsafeBytes { bBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+        let pipeline = try await shaderLibrary.computePipeline(for: .rctForward)
+        guard let commandBuffer = queue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw J2KError.internalError("Failed to create RCT command buffer/encoder")
+        }
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(rBuffer, offset: 0, index: 0)
+        encoder.setBuffer(gBuffer, offset: 0, index: 1)
+        encoder.setBuffer(bBuffer, offset: 0, index: 2)
+        encoder.setBuffer(yBuffer, offset: 0, index: 3)
+        encoder.setBuffer(uBuffer, offset: 0, index: 4)
+        encoder.setBuffer(vBuffer, offset: 0, index: 5)
+        var sampleCount = UInt32(count)
+        encoder.setBytes(&sampleCount, length: MemoryLayout<UInt32>.stride, index: 6)
+        let threadgroup = MTLSize(
+            width: min(pipeline.maxTotalThreadsPerThreadgroup, 256), height: 1, depth: 1)
+        let grid = MTLSize(
+            width: (count + threadgroup.width - 1) / threadgroup.width, height: 1, depth: 1)
+        encoder.dispatchThreadgroups(grid, threadsPerThreadgroup: threadgroup)
+        encoder.endEncoding()
+        commandBuffer.commit()
+        await commandBuffer.completed()
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Forward RCT GPU dispatch failed: "
+                    + "\(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+        return J2KMetalIntegerColorTransformResult(
+            component0: readInt32FromSharedBuffer(yBuffer, count: count),
+            component1: readInt32FromSharedBuffer(uBuffer, count: count),
+            component2: readInt32FromSharedBuffer(vBuffer, count: count),
+            transformType: .rct, usedGPU: true)
     }
 
     private func inverseTransformGPU(
@@ -764,6 +974,12 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Inverse colour-transform GPU dispatch failed: "
+                    + "\(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+
         let r = readFloatsFromSharedBuffer(rBuffer, count: count)
         let g = readFloatsFromSharedBuffer(gBuffer, count: count)
         let b = readFloatsFromSharedBuffer(bBuffer, count: count)
@@ -775,6 +991,72 @@ public actor J2KMetalColorTransform {
             transformType: configuration.transformType,
             usedGPU: true
         )
+    }
+
+    private func inverseRCTGPU(
+        component0: [Int32], component1: [Int32], component2: [Int32]
+    ) async throws -> J2KMetalIntegerColorTransformResult {
+        try await ensureInitialized()
+        let queue = try await metalDevice.commandQueue()
+        let device = queue.device
+        let count = component0.count
+        let byteCount = count * MemoryLayout<Int32>.stride
+        func makeBuffer() throws -> any MTLBuffer {
+            guard let buffer = device.makeBuffer(
+                length: max(byteCount, 1), options: .storageModeShared) else {
+                throw J2KError.internalError(
+                    "Failed to allocate inverse RCT Int32 Metal buffer")
+            }
+            return buffer
+        }
+        let yBuffer = try makeBuffer()
+        let uBuffer = try makeBuffer()
+        let vBuffer = try makeBuffer()
+        let rBuffer = try makeBuffer()
+        let gBuffer = try makeBuffer()
+        let bBuffer = try makeBuffer()
+        component0.withUnsafeBytes {
+            yBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+        }
+        component1.withUnsafeBytes {
+            uBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+        }
+        component2.withUnsafeBytes {
+            vBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+        }
+        let pipeline = try await shaderLibrary.computePipeline(for: .rctInverse)
+        guard let commandBuffer = queue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw J2KError.internalError(
+                "Failed to create inverse RCT command buffer/encoder")
+        }
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(yBuffer, offset: 0, index: 0)
+        encoder.setBuffer(uBuffer, offset: 0, index: 1)
+        encoder.setBuffer(vBuffer, offset: 0, index: 2)
+        encoder.setBuffer(rBuffer, offset: 0, index: 3)
+        encoder.setBuffer(gBuffer, offset: 0, index: 4)
+        encoder.setBuffer(bBuffer, offset: 0, index: 5)
+        var sampleCount = UInt32(count)
+        encoder.setBytes(&sampleCount, length: MemoryLayout<UInt32>.stride, index: 6)
+        let threadgroup = MTLSize(
+            width: min(pipeline.maxTotalThreadsPerThreadgroup, 256), height: 1, depth: 1)
+        let grid = MTLSize(
+            width: (count + threadgroup.width - 1) / threadgroup.width, height: 1, depth: 1)
+        encoder.dispatchThreadgroups(grid, threadsPerThreadgroup: threadgroup)
+        encoder.endEncoding()
+        commandBuffer.commit()
+        await commandBuffer.completed()
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Inverse RCT GPU dispatch failed: "
+                    + "\(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+        return J2KMetalIntegerColorTransformResult(
+            component0: readInt32FromSharedBuffer(rBuffer, count: count),
+            component1: readInt32FromSharedBuffer(gBuffer, count: count),
+            component2: readInt32FromSharedBuffer(bBuffer, count: count),
+            transformType: .rct, usedGPU: true)
     }
 
     private func applyNLTGPU(
@@ -899,6 +1181,12 @@ public actor J2KMetalColorTransform {
         commandBuffer.commit()
         await commandBuffer.completed()
 
+        if commandBuffer.status == .error {
+            throw J2KError.internalError(
+                "Non-linear transform GPU dispatch failed: "
+                    + "\(commandBuffer.error?.localizedDescription ?? "(no description)")")
+        }
+
         let result = readFloatsFromSharedBuffer(outputBuffer, count: count)
 
         // Buffers released via ARC when they go out of scope
@@ -918,6 +1206,18 @@ public actor J2KMetalColorTransform {
     private func inverseTransformGPU(
         component0: [Float], component1: [Float], component2: [Float]
     ) async throws -> J2KMetalColorTransformResult {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+
+    private func forwardRCTGPU(
+        red: [Int32], green: [Int32], blue: [Int32]
+    ) async throws -> J2KMetalIntegerColorTransformResult {
+        throw J2KError.unsupportedFeature("Metal is not available on this platform")
+    }
+
+    private func inverseRCTGPU(
+        component0: [Int32], component1: [Int32], component2: [Int32]
+    ) async throws -> J2KMetalIntegerColorTransformResult {
         throw J2KError.unsupportedFeature("Metal is not available on this platform")
     }
 
@@ -949,6 +1249,15 @@ private func readFloatsFromSharedBuffer(_ buffer: any MTLBuffer, count: Int) -> 
     return [Float](unsafeUninitializedCapacity: count) { buf, initialized in
         buf.baseAddress!.update(
             from: ptr.assumingMemoryBound(to: Float.self), count: count)
+        initialized = count
+    }
+}
+
+private func readInt32FromSharedBuffer(_ buffer: any MTLBuffer, count: Int) -> [Int32] {
+    guard count > 0 else { return [] }
+    let ptr = buffer.contents().assumingMemoryBound(to: Int32.self)
+    return [Int32](unsafeUninitializedCapacity: count) { destination, initialized in
+        destination.baseAddress!.update(from: ptr, count: count)
         initialized = count
     }
 }
