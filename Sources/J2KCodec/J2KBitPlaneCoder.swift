@@ -1662,14 +1662,12 @@ struct BitPlaneCoder: Sendable {
 final class DecoderScratchBuffers {
     private(set) var capacity: Int
     var magnitudes: [UInt32]
-    var signs: [Bool]
     var states: [CoefficientState]
     var halfBits: [UInt32]
 
     init(capacity: Int = 4096) {
         self.capacity = capacity
         magnitudes = [UInt32](repeating: 0, count: capacity)
-        signs = [Bool](repeating: false, count: capacity)
         states = [CoefficientState](repeating: [], count: capacity)
         halfBits = [UInt32](repeating: 0, count: capacity)
     }
@@ -1680,7 +1678,6 @@ final class DecoderScratchBuffers {
         if count > capacity {
             capacity = count &* 2
             magnitudes = [UInt32](repeating: 0, count: capacity)
-            signs = [Bool](repeating: false, count: capacity)
             states = [CoefficientState](repeating: [], count: capacity)
             halfBits = [UInt32](repeating: 0, count: capacity)
             return
@@ -1688,8 +1685,6 @@ final class DecoderScratchBuffers {
         // Zero only the used region via memset (faster than array init)
         magnitudes.withUnsafeMutableBufferPointer { p in
             _ = memset(p.baseAddress!, 0, count &* MemoryLayout<UInt32>.size) }
-        signs.withUnsafeMutableBufferPointer { p in
-            _ = memset(p.baseAddress!, 0, count &* MemoryLayout<Bool>.size) }
         states.withUnsafeMutableBufferPointer { p in
             _ = memset(p.baseAddress!, 0, count &* MemoryLayout<CoefficientState>.size) }
         halfBits.withUnsafeMutableBufferPointer { p in
@@ -1760,25 +1755,32 @@ struct BitPlaneDecoder: Sendable {
     ) throws -> [Int32] {
         let count = width * height
 
+        // A code-block with no coding passes is the JPEG 2000 representation
+        // of an all-zero block. Do not enter the bit-plane loop in this case:
+        // the old path still walked every active bit-plane and cleared the
+        // scratch state even though it had no entropy symbols to consume.
+        // Large sparse medical images contain many such blocks, so this is a
+        // correctness-preserving fast path for both fresh and reused scratch.
+        guard passCount > 0 else {
+            return [Int32](repeating: 0, count: count)
+        }
+
         // Use scratch buffers when provided.
         // "Steal" the arrays out of scratch so local vars have exclusive ownership
         // (refcount=1) — this prevents COW copies on every write into the arrays.
         // A defer block returns them to scratch for the next block.
         var magnitudes: [UInt32]
-        var signs: [Bool]
         var states: [CoefficientState]
         var halfBits: [UInt32]
 
         if let sc = scratch {
             sc.prepare(count: count)
             magnitudes = sc.magnitudes;     sc.magnitudes = []
-            signs = sc.signs;               sc.signs = []
             states = sc.states;             sc.states = []
             halfBits = sc.halfBits;         sc.halfBits = []
         } else {
             // Per-coefficient half-bit for midpoint reconstruction (OPJ "oneplushalf").
             magnitudes = [UInt32](repeating: 0, count: count)
-            signs = [Bool](repeating: false, count: count)
             states = [CoefficientState](repeating: [], count: count)
             halfBits = [UInt32](repeating: 0, count: count)
         }
@@ -1786,7 +1788,6 @@ struct BitPlaneDecoder: Sendable {
         defer {
             if let sc = scratch {
                 sc.magnitudes = magnitudes
-                sc.signs = signs
                 sc.states = states
                 sc.halfBits = halfBits
             }
@@ -1878,7 +1879,6 @@ struct BitPlaneDecoder: Sendable {
                 if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1) }
                 decodeSignificancePropagationPass(
                     magnitudes: &magnitudes,
-                    signs: &signs,
                     states: &states,
                     halfBits: &halfBits,
                     bitMask: bitMask,
@@ -1972,7 +1972,6 @@ struct BitPlaneDecoder: Sendable {
                 if ebcotTraceEnabled { EBCOTDebugTrace.shared.logDecode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1) }
                 decodeCleanupPass(
                     magnitudes: &magnitudes,
-                    signs: &signs,
                     states: &states,
                     halfBits: &halfBits,
                     bitMask: bitMask,
@@ -2020,25 +2019,27 @@ struct BitPlaneDecoder: Sendable {
         // Each significant coefficient has a half-bit set at the bit plane below the
         // lowest decoded plane, centering the value in the unresolved range.
         // The halfBits array tracks this per the OPJ "oneplushalf" approach.
+        // CoefficientState.signBit is the canonical sign store; keeping a second
+        // Bool array here doubled the per-block state traffic without adding data.
         var coefficients = [Int32](repeating: 0, count: width * height)
         magnitudes.withUnsafeBufferPointer { magBuf in
             halfBits.withUnsafeBufferPointer { halfBuf in
-                signs.withUnsafeBufferPointer { signBuf in
+                states.withUnsafeBufferPointer { stateBuf in
                     coefficients.withUnsafeMutableBufferPointer { coeffBuf in
                         let mp = magBuf.baseAddress!
                         let hp = halfBuf.baseAddress!
-                        let sp = signBuf.baseAddress!
+                        let statePtr = stateBuf.baseAddress!
                         let cp = coeffBuf.baseAddress!
-                        let spRaw = UnsafeRawPointer(sp).assumingMemoryBound(to: UInt8.self)
+                        let stateRaw = UnsafeRawPointer(statePtr).assumingMemoryBound(to: UInt8.self)
                         let simdCount = count / 4
                         let remStart = simdCount &* 4
                         for i in 0..<simdCount {
                             let base = i &* 4
                             let sb = SIMD4<UInt32>(
-                                UInt32(spRaw[base]),
-                                UInt32(spRaw[base &+ 1]),
-                                UInt32(spRaw[base &+ 2]),
-                                UInt32(spRaw[base &+ 3])
+                                UInt32((stateRaw[base] & 0x04) >> 2),
+                                UInt32((stateRaw[base &+ 1] & 0x04) >> 2),
+                                UInt32((stateRaw[base &+ 2] & 0x04) >> 2),
+                                UInt32((stateRaw[base &+ 3] & 0x04) >> 2)
                             )
                             let signMask = SIMD4<UInt32>.zero &- sb
                             let finalMag =
@@ -2052,7 +2053,9 @@ struct BitPlaneDecoder: Sendable {
                         }
                         for i in remStart..<count {
                             let finalMag = mp[i] | hp[i]
-                            cp[i] = sp[i] ? -Int32(bitPattern: finalMag) : Int32(bitPattern: finalMag)
+                            cp[i] = (statePtr[i].rawValue & 0x04) != 0
+                                ? -Int32(bitPattern: finalMag)
+                                : Int32(bitPattern: finalMag)
                         }
                     }
                 }
@@ -2068,7 +2071,6 @@ struct BitPlaneDecoder: Sendable {
     /// Decodes the significance propagation pass.
     private func decodeSignificancePropagationPass(
         magnitudes: inout [UInt32],
-        signs: inout [Bool],
         states: inout [CoefficientState],
         halfBits: inout [UInt32],
         bitMask: UInt32,
@@ -2081,20 +2083,18 @@ struct BitPlaneDecoder: Sendable {
         let h = height
 
         magnitudes.withUnsafeMutableBufferPointer { magBuf in
-            signs.withUnsafeMutableBufferPointer { signBuf in
-                states.withUnsafeMutableBufferPointer { stateBuf in
-                    halfBits.withUnsafeMutableBufferPointer { halfBuf in
-                        let magPtr = magBuf.baseAddress!
-                        let signPtr = signBuf.baseAddress!
-                        let statePtr = stateBuf.baseAddress!
-                        let halfPtr = halfBuf.baseAddress!
+            states.withUnsafeMutableBufferPointer { stateBuf in
+                halfBits.withUnsafeMutableBufferPointer { halfBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
+                    let halfPtr = halfBuf.baseAddress!
 
-                        contexts.withUnsafeMutableContextArray { ctxPtr in
-                            for stripeY in stride(from: 0, to: h, by: stripeHeight) {
-                                let stripeEnd = min(stripeY + stripeHeight, h)
+                    contexts.withUnsafeMutableContextArray { ctxPtr in
+                        for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                            let stripeEnd = min(stripeY + stripeHeight, h)
 
-                                for x in 0..<w {
-                                    for y in stripeY..<stripeEnd {
+                            for x in 0..<w {
+                                for y in stripeY..<stripeEnd {
                                         let idx = y &* w &+ x
 
                                         // sppSigContextOrSkip folds in the sig/coded check via
@@ -2116,8 +2116,6 @@ struct BitPlaneDecoder: Sendable {
 
                                             magPtr[idx] = magPtr[idx] | bitMask
                                             halfPtr[idx] = halfBitMask
-                                            signPtr[idx] = signBit
-
                                             // rawState is proven 0 here (sig/coded checked above)
                                             var newRaw: UInt8 = 0x03  // significant | codedThisPass
                                             if signBit { newRaw |= 0x04 }  // signBit
@@ -2133,7 +2131,6 @@ struct BitPlaneDecoder: Sendable {
                 }
             }
         }
-    }
 
     // MARK: - Magnitude Refinement Pass (Decode)
 
@@ -2249,7 +2246,6 @@ struct BitPlaneDecoder: Sendable {
     /// Decodes the cleanup pass.
     private func decodeCleanupPass(
         magnitudes: inout [UInt32],
-        signs: inout [Bool],
         states: inout [CoefficientState],
         halfBits: inout [UInt32],
         bitMask: UInt32,
@@ -2262,19 +2258,17 @@ struct BitPlaneDecoder: Sendable {
         let h = height
 
         magnitudes.withUnsafeMutableBufferPointer { magBuf in
-            signs.withUnsafeMutableBufferPointer { signBuf in
-                states.withUnsafeMutableBufferPointer { stateBuf in
-                    halfBits.withUnsafeMutableBufferPointer { halfBuf in
-                        let magPtr = magBuf.baseAddress!
-                        let signPtr = signBuf.baseAddress!
-                        let statePtr = stateBuf.baseAddress!
-                        let halfPtr = halfBuf.baseAddress!
+            states.withUnsafeMutableBufferPointer { stateBuf in
+                halfBits.withUnsafeMutableBufferPointer { halfBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
+                    let halfPtr = halfBuf.baseAddress!
 
-                        contexts.withUnsafeMutableContextArray { ctxPtr in
-                            for stripeY in stride(from: 0, to: h, by: stripeHeight) {
-                                let stripeEnd = min(stripeY + stripeHeight, h)
+                    contexts.withUnsafeMutableContextArray { ctxPtr in
+                        for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                            let stripeEnd = min(stripeY + stripeHeight, h)
 
-                                for x in 0..<w {
+                            for x in 0..<w {
                                     let eligible = canUseRunLengthDecodingUnsafe(
                                         x: x,
                                         stripeStart: stripeY,
@@ -2316,7 +2310,6 @@ struct BitPlaneDecoder: Sendable {
 
                                             magPtr[firstIdx] = magPtr[firstIdx] | bitMask
                                             halfPtr[firstIdx] = halfBitMask
-                                            signPtr[firstIdx] = firstSignBit
                                             // RLC eligibility guarantees state==0 for firstIdx
                                             var firstNewRaw: UInt8 = 0x03  // significant | codedThisPass
                                             if firstSignBit { firstNewRaw |= 0x04 }  // signBit
@@ -2342,8 +2335,6 @@ struct BitPlaneDecoder: Sendable {
 
                                                     magPtr[idx] = magPtr[idx] | bitMask
                                                     halfPtr[idx] = halfBitMask
-                                                    signPtr[idx] = signBit
-
                                                     var newRaw2: UInt8 = 0x03  // significant | codedThisPass
                                                     if signBit { newRaw2 |= 0x04 }  // signBit
                                                     statePtr[idx] = CoefficientState(rawValue: newRaw2)
@@ -2376,20 +2367,17 @@ struct BitPlaneDecoder: Sendable {
 
                                             magPtr[idx] = magPtr[idx] | bitMask
                                             halfPtr[idx] = halfBitMask
-                                            signPtr[idx] = signBit
-
                                             // rawState is proven 0 here (sig/coded checked above)
                                             var newRaw: UInt8 = 0x03  // significant | codedThisPass
                                             if signBit { newRaw |= 0x04 }  // signBit
                                             statePtr[idx] = CoefficientState(rawValue: newRaw)
                                         } else {
                                             statePtr[idx] = CoefficientState(rawValue: 0x02)  // codedThisPass
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
+                }
+            }
                 }
             }
         }
