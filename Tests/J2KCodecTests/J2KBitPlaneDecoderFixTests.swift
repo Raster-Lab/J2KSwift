@@ -114,6 +114,30 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         try testRoundTrip(values: [(0, 128), (5, -64), (10, 32), (15, 16)], width: 4, height: 4)
     }
 
+    /// Empty packet code-blocks have zero coding passes and represent an
+    /// all-zero coefficient block. They must not walk the full bit-plane
+    /// state machine (especially when a worker reuses decoder scratch).
+    func testZeroPassCodeBlockShortCircuitsToZeros() throws {
+        let decoder = BitPlaneDecoder(width: 64, height: 64, subband: .hh)
+        let scratch = DecoderScratchBuffers(capacity: 64 * 64)
+        let coder = BitPlaneCoder(width: 64, height: 64, subband: .hh)
+        var source = [Int32](repeating: 0, count: 64 * 64)
+        source[64 * 17 + 23] = -127
+        let (data, passCount, zeroBitPlanes, _, _, _, _, _, _) = try coder.encode(
+            coefficients: source, bitDepth: 16)
+        _ = try decoder.decode(
+            data: data, passCount: passCount, bitDepth: 16,
+            zeroBitPlanes: zeroBitPlanes, scratch: scratch)
+
+        // Reusing the same worker scratch must not leak the previous block's
+        // magnitude/sign state into a zero-pass block.
+        let decoded = try decoder.decode(
+            data: Data(), passCount: 0, bitDepth: 16, zeroBitPlanes: 16,
+            scratch: scratch)
+        XCTAssertEqual(decoded.count, 64 * 64)
+        XCTAssertTrue(decoded.allSatisfy { $0 == 0 })
+    }
+
     // MARK: - Different Block Sizes
 
     /// Test with 8x8 block.

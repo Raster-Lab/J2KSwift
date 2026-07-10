@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added GPU-vs-CPU regression coverage for exact lossless grayscale/RGB
   codestreams, integer RCT round trips, and multi-component rate-control
   budgets.
+- EBCOT decoder scratch no longer carries a duplicate per-coefficient sign
+  buffer; the sign already stored in `CoefficientState` is used throughout
+  decoding and reconstruction. Zero-pass code-blocks also short-circuit to
+  zero coefficients without entering the bit-plane state machine.
 
 ## [11.0.0] — 2026-06-10
 
