@@ -15,12 +15,14 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 11.0.0
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v10.24.2 is a **decoder-only patch** that load-balances the parallel entropy code-block **decode** (LPT distribution across 2× cores + `.high` P-core bias) — the previous static contiguous chunking left ~2.9 of 8 cores effective on M2 with the tail gated by a few detail-heavy blocks spilling onto E-cores. Bit-exact and codestream byte-identical to v10.24.1; SDK/library decode is up to **−25%** (DX 63.9→48.1 ms), multi-tile MG −5–8%. Came out of a "be #1 vs Kakadu" investigation — this is the genuine shippable win; the encode-rebalance and row-band CPU inverse-DWT levers were measured as M2 washes and not shipped. See [RELEASE_NOTES_v10.24.2.md](RELEASE_NOTES_v10.24.2.md).
-**Previous Release**: 10.25.0 (optimization-audit arc — MG decode leads Kakadu/Grok on small+mid)
+**Current Version**: 11.0.1
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v11.0.1 is a decoder-only patch: EBCOT workers no longer maintain a duplicate per-coefficient sign buffer, zero-pass blocks short-circuit before the bit-plane state machine, and the changes remain bit-exact with no public API change. See [RELEASE_NOTES_v11.0.1.md](RELEASE_NOTES_v11.0.1.md).
+**Previous Release**: 11.0.0 (dead-weight removal + versioned SwiftPM packaging)
 **Release process**: see [RELEASING.md](RELEASING.md). Every release MUST update this README (Current Version line + new Release Status paragraph) — see the Release artefacts checklist for the full requirements.
 
 ## 📦 Release Status
+
+**v11.0.1** is a decoder-only correctness/performance patch. EBCOT decoder scratch now uses the sign bit already carried by `CoefficientState`, avoiding redundant allocation, zeroing, and writes; empty zero-pass blocks return zero coefficients immediately. Real TCIA DBT validation covered all 100 1996×2457 lossless JPEG 2000 frames with bit-identical output. See [RELEASE_NOTES_v11.0.1.md](RELEASE_NOTES_v11.0.1.md).
 
 **v11.0.0** is the **dead-weight + packaging MAJOR** — ~125K deleted lines with **zero codec behaviour change** (codestream bytes and decoded pixels identical to v10.25.0). Removes the production-dead exported products `J2KAccelerate`/`J2KVulkan`/`J2KXS`, the MJ2 container stack, dead pool/concurrency/benchmark/conformance scaffolding (~15K lines out of J2KCore alone — DICOMKit-consumed HT conformance types survive unchanged in `J2KHTConformanceAPI.swift`), orphan source dirs, and ~23 MB of tracked artifacts. Every candidate was verified reference-free by a 25-agent sweep with adversarial re-checks. **Packaging headline: the manifest is unsafeFlags-free, making J2KSwift consumable as a versioned SwiftPM dependency for the first time** (verified end-to-end; the NEON `-O3` removal was A/B-measured as a wash first). Clean debug build −24.6% (52.8→39.8 s); `Sources/` −19%. Deferred: the `.custom` HT format (three live consumer chains). Gate + touched suites 271/271, exit 0. MAJOR per RELEASING.md (products removed). See [RELEASE_NOTES_v11.0.0.md](RELEASE_NOTES_v11.0.0.md).
 
