@@ -484,6 +484,35 @@ final class J2KMetalColorTransformTests: XCTestCase {
         }
     }
 
+    /// RCT must use native Int32 Metal buffers. This regression catches the
+    /// previous Float-byte upload into the integer shader, which returned a
+    /// valid but numerically corrupt transform.
+    func testGPUIntegerRCTMatchesCPUAndRoundTrips() async throws {
+        try XCTSkipUnless(J2KMetalColorTransform.isAvailable, "Metal not available")
+        let count = 4096
+        let red = (0..<count).map { Int32(($0 * 37) & 0xFF) }
+        let green = (0..<count).map { Int32(($0 * 73 + 11) & 0xFF) }
+        let blue = (0..<count).map { Int32(($0 * 109 + 23) & 0xFF) }
+        let config = J2KMetalColorTransformConfiguration.lossless
+        let transform = J2KMetalColorTransform(configuration: config)
+        let cpu = try await transform.forwardRCT(
+            red: red, green: green, blue: blue, backend: .cpu)
+        let gpu = try await transform.forwardRCT(
+            red: red, green: green, blue: blue, backend: .gpu)
+        XCTAssertTrue(gpu.usedGPU)
+        XCTAssertEqual(gpu.component0, cpu.component0)
+        XCTAssertEqual(gpu.component1, cpu.component1)
+        XCTAssertEqual(gpu.component2, cpu.component2)
+
+        let restored = try await transform.inverseRCT(
+            component0: gpu.component0, component1: gpu.component1,
+            component2: gpu.component2, backend: .gpu)
+        XCTAssertTrue(restored.usedGPU)
+        XCTAssertEqual(restored.component0, red)
+        XCTAssertEqual(restored.component1, green)
+        XCTAssertEqual(restored.component2, blue)
+    }
+
     /// Tests error for empty NLT input.
     func testEmptyNLTError() async {
         let ct = J2KMetalColorTransform()

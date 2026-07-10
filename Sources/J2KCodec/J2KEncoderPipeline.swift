@@ -1883,8 +1883,9 @@ struct EncoderPipeline: Sendable {
         // Stage 6: Rate Control
         reportProgress(progress, stage: .rateControl, stageProgress: 0.0)
         let layers = try applyRateControl(
-            codeBlocks: codeBlocks, totalPixels: image.width * image.height
-        )
+            codeBlocks: codeBlocks,
+            totalPixels: image.width * image.height,
+            componentCount: image.components.count)
         reportProgress(progress, stage: .rateControl, stageProgress: 1.0)
         do {
             let t = CFAbsoluteTimeGetCurrent()
@@ -1918,6 +1919,19 @@ struct EncoderPipeline: Sendable {
         _ components: [[Int32]], floatComponents: [[Float]]? = nil,
         width: Int, height: Int
     ) async throws -> ([[SubbandInfo]], Int) {
+        // Reversible 5/3 is an integer transform. Reuse the canonical path,
+        // which selects the bit-exact Int32 Metal implementation when
+        // available, instead of entering the Float API and silently rounding.
+        if config.useReversibleFilter {
+            if case .arbitrary = config.waveletKernelConfiguration {
+                return try await applyWaveletTransform(
+                    components, floatComponents: floatComponents,
+                    width: width, height: height)
+            }
+            return try await applyWaveletTransform(
+                components, floatComponents: nil, width: width, height: height)
+        }
+
         // Fall back to CPU for custom wavelet kernels only
         if case .arbitrary = config.waveletKernelConfiguration {
             return try await applyWaveletTransform(components, floatComponents: floatComponents,
@@ -2049,12 +2063,26 @@ struct EncoderPipeline: Sendable {
             return try applyColorTransform(components, image: image, tileIndex: tileIndex)
         }
 
-        let transformType: J2KMetalColorTransformType = config.useReversibleFilter ? .rct : .ict
-        let metalConfig = J2KMetalColorTransformConfiguration(transformType: transformType)
+        // RCT is an integer transform. Keep the sample representation Int32
+        // all the way through Metal; uploading Float bytes to the Int32 RCT
+        // kernel is a type-punning corruption bug.
+        if config.useReversibleFilter {
+            let metalConfig = J2KMetalColorTransformConfiguration(transformType: .rct)
+            let metalCT = J2KMetalColorTransform(configuration: metalConfig)
+            try await metalCT.initialize()
+            let result = try await metalCT.forwardRCT(
+                red: components[0], green: components[1], blue: components[2], backend: .auto)
+            var intResult = [result.component0, result.component1, result.component2]
+            if components.count > 3 {
+                intResult.append(contentsOf: components[3...])
+            }
+            return (intResult, nil)
+        }
+
+        // Convert Int32 to Float for the irreversible ICT path.
+        let metalConfig = J2KMetalColorTransformConfiguration(transformType: .ict)
         let metalCT = J2KMetalColorTransform(configuration: metalConfig)
         try await metalCT.initialize()
-
-        // Convert Int32 to Float for Metal
         let redFloat = vDSPConvert.int32sToFloats(components[0])
         let greenFloat = vDSPConvert.int32sToFloats(components[1])
         let blueFloat = vDSPConvert.int32sToFloats(components[2])
@@ -6072,7 +6100,7 @@ struct EncoderPipeline: Sendable {
     /// Applies rate control and quality layer formation.
     private func applyRateControl(
         codeBlocks: [J2KCodeBlock], totalPixels: Int,
-        componentCount: Int = 1
+        componentCount: Int
     ) throws -> [QualityLayer] {
         guard !codeBlocks.isEmpty else {
             return [QualityLayer(index: 0)]

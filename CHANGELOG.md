@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [`Documentation/releases/`](Documentation/releases/) as
 > `RELEASE_NOTES_vX.Y.Z.md`; this file resumes at v10.9.1.
 
+## [Unreleased]
+
+### Fixed
+
+- **GPU encoder corruption** — reversible RGB colour transforms now keep
+  Int32 samples through the RCT Metal buffers instead of uploading Float32
+  bytes to an integer kernel; reversible 5/3 encoding now uses the existing
+  bit-exact Int32 GPU path; lossy GPU rate control accounts for every image
+  component; and float Metal command-buffer failures are surfaced to callers.
+- Added GPU-vs-CPU regression coverage for exact lossless grayscale/RGB
+  codestreams, integer RCT round trips, and multi-component rate-control
+  budgets.
+
 ## [11.0.0] — 2026-06-10
 
 **Dead-weight removal + packaging MAJOR — ~125K deleted lines, zero codec behaviour change**
