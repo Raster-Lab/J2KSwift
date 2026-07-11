@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.0.2] — 2026-07-11
+
+### Fixed
+
+- Truncated EBCOT quality-layer prefixes now stop decoding at the exact coding-pass boundary instead of walking every remaining bit-plane.
+- Decoder scratch-state clearing is limited to the logical code-block region rather than the retained worker-buffer capacity.
+- Disabled EBCOT tracing is removed with conditional compilation, eliminating debug-build tracing checks from production decoder paths.
+- Added focused pass-boundary and performance regressions plus a bounded, process-group-safe DBT verification script.
+
+## [11.0.1] — 2026-07-10
+
 ### Fixed
 
 - **GPU encoder corruption** — reversible RGB colour transforms now keep
