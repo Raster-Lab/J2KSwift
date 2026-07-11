@@ -15,12 +15,14 @@
 
 A pure Swift 6.2 implementation of JPEG 2000 (ISO/IEC 15444) encoding and decoding with strict concurrency support.
 
-**Current Version**: 11.0.1
-**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v11.0.1 is a decoder-only patch: EBCOT workers no longer maintain a duplicate per-coefficient sign buffer, zero-pass blocks short-circuit before the bit-plane state machine, and the changes remain bit-exact with no public API change. See [RELEASE_NOTES_v11.0.1.md](RELEASE_NOTES_v11.0.1.md).
-**Previous Release**: 11.0.0 (dead-weight removal + versioned SwiftPM packaging)
+**Current Version**: 11.0.2
+**Status**: Apple Silicon-first JPEG 2000 / HTJ2K (Part-15) implementation. v11.0.2 is a decoder-only DBT performance patch: truncated quality-layer prefixes stop at their exact coding-pass boundary, reusable scratch clears are limited to the logical code-block region, and disabled EBCOT tracing is compiled out. Decoded pixels remain bit-exact with no public API or codestream-format change. See [RELEASE_NOTES_v11.0.2.md](RELEASE_NOTES_v11.0.2.md).
+**Previous Release**: 11.0.1 (EBCOT decoder state optimization)
 **Release process**: see [RELEASING.md](RELEASING.md). Every release MUST update this README (Current Version line + new Release Status paragraph) — see the Release artefacts checklist for the full requirements.
 
 ## 📦 Release Status
+
+**v11.0.2** fixes the DBT bit-plane decoder hot path. Quality-layer prefixes now stop as soon as their requested coding passes are consumed, scratch-state clearing touches only the logical code-block extent, and EBCOT diagnostics impose no cost unless explicitly compiled in. Focused decoder regressions and bounded real-frame DBT verification are bit-exact. See [RELEASE_NOTES_v11.0.2.md](RELEASE_NOTES_v11.0.2.md).
 
 **v11.0.1** is a decoder-only correctness/performance patch. EBCOT decoder scratch now uses the sign bit already carried by `CoefficientState`, avoiding redundant allocation, zeroing, and writes; empty zero-pass blocks return zero coefficients immediately. Real TCIA DBT validation covered all 100 1996×2457 lossless JPEG 2000 frames with bit-identical output. See [RELEASE_NOTES_v11.0.1.md](RELEASE_NOTES_v11.0.1.md).
 
