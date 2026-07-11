@@ -516,7 +516,8 @@ struct MQEncoder: Sendable {
     /// Uses flat state arrays to avoid struct copies in the critical path.
     @inline(__always)
     mutating func encode(symbol: Bool, context: inout MQContext) {
-        if ebcotTraceEnabled {
+        #if EBCOT_DEBUG_TRACE
+        do {
             operationCount += 1
             let preA = a
             let preC = c
@@ -527,6 +528,7 @@ struct MQEncoder: Sendable {
                 )
             }
         }
+        #endif
         let si = Int(context.stateIndex)
         // Same single-load packed lookup as MQDecoder.decode — see
         // `mqStatePacked` for the bit layout.
@@ -928,12 +930,14 @@ struct MQDecoder: @unchecked Sendable {
             }
         }
 
-        if ebcotTraceEnabled && EBCOTDebugTrace.shared.enabled {
+        #if EBCOT_DEBUG_TRACE
+        if EBCOTDebugTrace.shared.enabled {
             operationCount += 1
             EBCOTDebugTrace.shared.decoderSymbols.append(
                 (operationCount, 0, symbol, 0, UInt32(EBCOTDebugTrace.shared.currentContextLabel), 0)
             )
         }
+        #endif
 
         return symbol
     }

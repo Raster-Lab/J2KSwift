@@ -138,6 +138,77 @@ final class J2KBitPlaneDecoderFixTests: XCTestCase {
         XCTAssertTrue(decoded.allSatisfy { $0 == 0 })
     }
 
+    /// A quality-layer prefix may stop after any coding pass. Once that pass
+    /// has been consumed, the decoder must not keep walking lower bit-planes
+    /// or touch the unused tail of a worker's capacity-sized scratch arrays.
+    func testSinglePassPrefixStopsAtLogicalBlockBoundary() throws {
+        let width = 8
+        let height = 4
+        let count = width * height
+        var source = [Int32](repeating: 0, count: count)
+        source[3] = 1 << 20
+        source[17] = -(1 << 19)
+
+        let coder = BitPlaneCoder(width: width, height: height, subband: .hl)
+        let (data, _, zeroBitPlanes, _, _, _, _, _, _) = try coder.encode(
+            coefficients: source,
+            bitDepth: 30
+        )
+
+        let scratch = DecoderScratchBuffers(capacity: 4096)
+        let untouchedTailIndex = 64
+        scratch.states[untouchedTailIndex] = CoefficientState(rawValue: 0x0F)
+
+        let decoder = BitPlaneDecoder(width: width, height: height, subband: .hl)
+        let decoded = try decoder.decode(
+            data: data,
+            passCount: 1,
+            bitDepth: 30,
+            zeroBitPlanes: zeroBitPlanes,
+            scratch: scratch
+        )
+
+        XCTAssertEqual(decoded.count, count)
+        XCTAssertEqual(scratch.states[untouchedTailIndex].rawValue, 0x0F)
+    }
+
+    /// Keeps the truncated-prefix path bounded in normal debug test builds,
+    /// where accidentally scanning all remaining planes is especially costly.
+    func testSinglePassPrefixPerformanceBound() throws {
+        let width = 64
+        let height = 64
+        var source = [Int32](repeating: 0, count: width * height)
+        for index in stride(from: 0, to: source.count, by: 37) {
+            source[index] = index.isMultiple(of: 2) ? 1 << 20 : -(1 << 19)
+        }
+
+        let coder = BitPlaneCoder(width: width, height: height, subband: .hh)
+        let (data, _, zeroBitPlanes, _, _, _, _, _, _) = try coder.encode(
+            coefficients: source,
+            bitDepth: 30
+        )
+        let decoder = BitPlaneDecoder(width: width, height: height, subband: .hh)
+        let scratch = DecoderScratchBuffers(capacity: width * height)
+
+        let start = ContinuousClock.now
+        for _ in 0..<100 {
+            _ = try decoder.decode(
+                data: data,
+                passCount: 1,
+                bitDepth: 30,
+                zeroBitPlanes: zeroBitPlanes,
+                scratch: scratch
+            )
+        }
+        let elapsed = ContinuousClock.now - start
+
+        XCTAssertLessThan(
+            elapsed,
+            .seconds(2),
+            "100 single-pass 64×64 prefixes exceeded the bounded debug-test budget"
+        )
+    }
+
     // MARK: - Different Block Sizes
 
     /// Test with 8x8 block.

@@ -4,6 +4,22 @@ This directory contains utility scripts for development, testing, and benchmarki
 
 ## Available Scripts
 
+### verify-dbt-decoder.sh
+
+Runs the release decoder against local `dbt_frame*.j2k` fixtures, compares
+each decoded PGM byte-for-byte with its matching reference, and enforces a
+per-frame wall-time bound. Every decoder is placed in its own process group;
+on timeout the script hard-kills the complete group before returning failure.
+Progress is printed per sample so a long corpus run always identifies the
+active frame.
+
+```bash
+Scripts/verify-dbt-decoder.sh --input-dir /tmp
+```
+
+The default limits are 10 seconds hard timeout and 5,000 milliseconds elapsed
+time per frame. Use `--binary` to validate an already-built release executable.
+
 ### benchmark_openjpeg.sh
 
 Automated performance comparison between J2KSwift and OpenJPEG.

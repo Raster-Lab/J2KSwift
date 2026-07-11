@@ -980,7 +980,9 @@ struct ContextStateArray: Sendable {
     @inline(__always)
     subscript(context: EBCOTContext) -> MQContext {
         get {
-            if ebcotTraceEnabled { EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue) }
+            #if EBCOT_DEBUG_TRACE
+            EBCOTDebugTrace.shared.currentContextLabel = Int(context.rawValue)
+            #endif
             return self[context.rawValue]
         }
         set { self[context.rawValue] = newValue }
