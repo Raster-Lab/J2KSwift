@@ -183,7 +183,7 @@ public actor J2KPowerEfficiencyManager {
 
     /// Updates the current power state.
     private func updatePowerState() {
-        #if os(iOS) || os(tvOS)
+        #if os(iOS)
         let device = UIDevice.current
         device.isBatteryMonitoringEnabled = true
 
@@ -197,6 +197,16 @@ public actor J2KPowerEfficiencyManager {
             batteryLevel: batteryLevel,
             isLowPowerModeEnabled: isLowPowerMode,
             thermalState: thermalState
+        )
+        #elseif os(tvOS)
+        // Apple TV has no battery APIs and is always externally powered.
+        // Preserve thermal and low-power observations without touching the
+        // UIDevice battery properties that are explicitly unavailable on tvOS.
+        currentState = PowerState(
+            isPluggedIn: true,
+            batteryLevel: nil,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            thermalState: J2KThermalState.from(processInfo: ProcessInfo.processInfo)
         )
         #elseif os(macOS)
         // On macOS, use IOKit to check power source

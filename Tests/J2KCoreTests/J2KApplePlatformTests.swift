@@ -55,6 +55,11 @@ final class J2KApplePlatformTests: XCTestCase {
         if let state = state {
             // Verify state properties are reasonable
             XCTAssertNotNil(state.thermalState)
+
+            #if os(tvOS)
+            XCTAssertTrue(state.isPluggedIn)
+            XCTAssertNil(state.batteryLevel)
+            #endif
         }
         #else
         // On other platforms, state may be nil
