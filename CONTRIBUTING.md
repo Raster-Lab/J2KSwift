@@ -82,6 +82,32 @@ We are committed to providing a welcoming and inclusive environment for all cont
 7. Read the architecture overview before making structural changes:
    - [`Documentation/ARCHITECTURE.md`](Documentation/ARCHITECTURE.md) — module organisation, concurrency model, performance subsystems
 
+### macOS: pointing SwiftPM at a full Xcode
+
+If `swift test` or `swift build --build-tests` fails because the `XCTest` module
+cannot be found, check what the active developer directory is:
+
+```bash
+xcode-select -p
+```
+
+If that prints `/Library/Developer/CommandLineTools`, the Command Line Tools are
+active. They do not ship XCTest, so **every** test target fails to build even
+though `swift build` on its own succeeds. Point SwiftPM at a full Xcode
+installation for the command you are running by setting `DEVELOPER_DIR`:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build --build-tests
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+```
+
+Adjust the path to the Xcode you have installed — for a side-by-side version
+install this looks like `/Applications/Xcode-26.2.app/Contents/Developer`.
+Export `DEVELOPER_DIR` from your shell profile to make it the default.
+
+Prefer `DEVELOPER_DIR` over `sudo xcode-select -s`: it is scoped to your shell
+rather than the whole machine, and it needs no elevated privileges.
+
 ## Development Workflow
 
 ### Branching Strategy
@@ -178,6 +204,30 @@ Key points:
   - One blank line between type definitions
   - One blank line between method definitions
   - No trailing whitespace
+- **Type-checker budget**: do not leave literal-heavy integer arithmetic as the
+  bare result of a closure whose type still has to be inferred. Swift must then
+  search every integer overload of each operator at once, which can exceed the
+  type checker's time limit — a hard build error, not a warning:
+
+  ```swift
+  // Can fail to type-check in reasonable time
+  (0..<count).map { index -> UInt8 in
+      UInt8((index * (component + 3) * 29 + component * 17) & 0xFF)
+  }
+
+  // Annotating one intermediate collapses the search
+  (0..<count).map { index -> UInt8 in
+      let value: Int = index * (component + 3) * 29 + component * 17
+      return UInt8(value & 0xFF)
+  }
+  ```
+
+  To find expressions that are close to the limit before they cross it:
+
+  ```bash
+  swift build --build-tests -Xswiftc -Xfrontend \
+      -Xswiftc -warn-long-expression-type-checking=500
+  ```
 
 ### Concurrency
 
