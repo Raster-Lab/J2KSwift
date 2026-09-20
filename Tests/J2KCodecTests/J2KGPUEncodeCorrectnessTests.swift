@@ -13,7 +13,8 @@ final class J2KGPUEncodeCorrectnessTests: XCTestCase {
         let count = width * height
         let planes = (0..<components).map { component in
             let values = (0..<count).map { index -> UInt8 in
-                UInt8((index * (component + 3) * 29 + component * 17) & 0xFF)
+                let value: Int = index * (component + 3) * 29 + component * 17
+                return UInt8(value & 0xFF)
             }
             return J2KComponent(
                 index: component, bitDepth: 8, signed: false,
