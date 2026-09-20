@@ -922,6 +922,14 @@ See [MILESTONES.md](MILESTONES.md) for the detailed 100-week development roadmap
 - **J2K3D**: JP3D volumetric coverage
 
 ### Running Tests
+
+> **macOS:** if the test targets fail to build with a missing `XCTest` module,
+> `xcode-select -p` is pointing at `/Library/Developer/CommandLineTools`, which
+> does not ship XCTest. Prefix the command with a full Xcode's developer
+> directory — for example
+> `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test`. See
+> [CONTRIBUTING.md](CONTRIBUTING.md#macos-pointing-swiftpm-at-a-full-xcode).
+
 ```bash
 # Run all tests
 swift test

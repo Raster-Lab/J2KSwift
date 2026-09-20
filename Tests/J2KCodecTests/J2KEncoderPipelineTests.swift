@@ -864,7 +864,8 @@ final class J2KEncoderPipelineTests: XCTestCase {
                 let index = y * width + x
                 let smoothValue = UInt8(((Double(x) / Double(max(1, width - 1))) * 255.0).rounded())
                 smoothData[index] = smoothValue
-                noisyData[index] = UInt8((x &* 37 &+ y &* 91 &+ index &* 17) & 0xFF)
+                let noisyValue: Int = x &* 37 &+ y &* 91 &+ index &* 17
+                noisyData[index] = UInt8(noisyValue & 0xFF)
             }
         }
 
