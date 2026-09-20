@@ -78,9 +78,16 @@ final class HTStandaloneBench: XCTestCase {
         let losslessNote = (decoded == pixels) ? "✓"
             : (decoded == nil ? "(n/a pipeline)" : "✗")
         let decStr = decMS.map { String(format: "%.2f", $0) } ?? "  —  "
-        print(String(format: "%-30s  %5dx%5d  enc %.2f ms  dec %@ ms   %d bytes   %.3f bpp   %@",
-              label, width, height, encMS, decStr,
-              encoded.count, bpp, losslessNote))
+        // `%s` SIGSEGVs on a Swift String passed through varargs (it is
+        // read as a C `char *`); pad the label in Swift and keep
+        // `String(format:)` for the numeric columns only. `%@` is not a
+        // substitute here because CoreFoundation ignores its width flag.
+        let labelCol = label.count >= 30 ? label
+            : label + String(repeating: " ", count: 30 - label.count)
+        let stats = String(
+            format: "  %5dx%5d  enc %.2f ms  dec %@ ms   %d bytes   %.3f bpp   %@",
+            width, height, encMS, decStr, encoded.count, bpp, losslessNote)
+        print(labelCol + stats)
     }
 
     func testBenchJ2KSwiftHT256Custom() async throws {
