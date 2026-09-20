@@ -190,7 +190,8 @@ final class V10_14_DecodePartialTests: XCTestCase {
             var data = Data(count: w * h)
             for y in 0..<h {
                 for x in 0..<w {
-                    data[y * w + x] = UInt8((x + y * 2 + c * 50) & 0xFF)
+                    let value: Int = x + y * 2 + c * 50
+                    data[y * w + x] = UInt8(value & 0xFF)
                 }
             }
             return J2KComponent(index: c, bitDepth: 8, signed: false,

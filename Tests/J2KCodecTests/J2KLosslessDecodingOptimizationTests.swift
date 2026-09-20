@@ -174,16 +174,16 @@ final class J2KLosslessDecodingOptimizationTests: XCTestCase {
 
         // Create 32x32 test subbands
         let size = 16
-        let ll = (0..<size).map { row in
+        let ll: [[Int32]] = (0..<size).map { row in
             (0..<size).map { col in Int32(row * size + col) }
         }
-        let lh = (0..<size).map { row in
+        let lh: [[Int32]] = (0..<size).map { row in
             (0..<size).map { col in Int32(row * size + col + 1000) }
         }
-        let hl = (0..<size).map { row in
+        let hl: [[Int32]] = (0..<size).map { row in
             (0..<size).map { col in Int32(row * size + col + 2000) }
         }
-        let hh = (0..<size).map { row in
+        let hh: [[Int32]] = (0..<size).map { row in
             (0..<size).map { col in Int32(row * size + col + 3000) }
         }
 

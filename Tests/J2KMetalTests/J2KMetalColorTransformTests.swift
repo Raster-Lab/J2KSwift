@@ -490,9 +490,18 @@ final class J2KMetalColorTransformTests: XCTestCase {
     func testGPUIntegerRCTMatchesCPUAndRoundTrips() async throws {
         try XCTSkipUnless(J2KMetalColorTransform.isAvailable, "Metal not available")
         let count = 4096
-        let red = (0..<count).map { Int32(($0 * 37) & 0xFF) }
-        let green = (0..<count).map { Int32(($0 * 73 + 11) & 0xFF) }
-        let blue = (0..<count).map { Int32(($0 * 109 + 23) & 0xFF) }
+        let red: [Int32] = (0..<count).map { index -> Int32 in
+            let value: Int = index * 37
+            return Int32(value & 0xFF)
+        }
+        let green: [Int32] = (0..<count).map { index -> Int32 in
+            let value: Int = index * 73 + 11
+            return Int32(value & 0xFF)
+        }
+        let blue: [Int32] = (0..<count).map { index -> Int32 in
+            let value: Int = index * 109 + 23
+            return Int32(value & 0xFF)
+        }
         let config = J2KMetalColorTransformConfiguration.lossless
         let transform = J2KMetalColorTransform(configuration: config)
         let cpu = try await transform.forwardRCT(
