@@ -92,6 +92,22 @@ Its entropy payload is byte-identical to the untiled encoding of the same image 
 the SIZ fields differ — and it decoded to garbage. `tileSize` is now clamped to the grid
 at parse time.
 
+### 8. A degenerate sub-band dropped a whole resolution level
+
+The precinct grid spans a resolution level, but it was sized from HL alone. HL carries a
+half-sample x offset and HH carries both (Eq. B-15), so for a tile the image edge cuts
+to a narrow strip either can come out **exactly zero** wide while LH does not. The
+`guard sbWRef > 0` that followed then skipped the entire resolution level — and with it
+a packet that really was present — desynchronising every packet after it.
+
+This was the whole of the remaining partial-tile failure, and it explains why the
+failure was x-specific: only the x offsets can make a band degenerate in width. It also
+explains the dependence on decomposition depth — a 4-wide tile at x = 256 is exact at
+one and two levels and wrong at three and five, because HL only collapses to zero once
+the offset exceeds the strip.
+
+`resolutionGridSize` now takes the extent across every sub-band the level carries.
+
 ## Result
 
 Scored against the corpus, counting only streams whose samples can be compared exactly
@@ -99,10 +115,13 @@ Scored against the corpus, counting only streams whose samples can be compared e
 
 | | before | after |
 |---|---|---|
-| exact | 116 | **204** |
-| wrong | 78 | 4 |
-| threw | 14 | 0 |
-| total | 208 | 208 |
+| exact | 116 | **211** |
+| wrong | 78 | **0** |
+| threw | 14 | **0** |
+| total | 208 | 211 |
+
+(The corpus gained three streams during the investigation, isolating the tiling axis:
+512×389, 517×384 and 260×260 at 128×128 tiles.)
 
 By mode, after:
 
@@ -113,36 +132,15 @@ By mode, after:
 | restart | **16 / 16** |
 | allmodes (`BYPASS\|RESTART\|PREDICTABLE\|SEGMARK`) | **16 / 16** |
 | byprest (`BYPASS\|RESTART`) | **8 / 8** |
+| tiled | **35 / 35** |
 | lossless, L5, cblk32, blk32, rpcl, rev, ht | **112 / 112** |
-| tiled | 28 / 32 |
+
+Every conformant reversible stream in the corpus now decodes sample-exactly.
 
 Reproduce with `Scripts/generate-integrity-corpus.sh` and the scoring harness described
 in `Documentation/INTEGRITY_CALIBRATION.md`.
 
 ## Still wrong
-
-### Partial tiles in the X direction
-
-A tile column cut short by the right image edge decodes wrong. Isolated to the axis:
-
-| image | tile | result |
-|---|---|---|
-| 512 × 389 | 128 × 128 | **exact** (height partial is fine) |
-| 517 × 384 | 128 × 128 | wrong: 1,920 samples = 5 × 384 |
-| 517 × 389 | 128 × 128 | wrong: 1,945 samples = 5 × 389 |
-| 260 × 260 | 128 × 128 | wrong: 1,040 samples = 4 × 260 |
-
-The wrong region is always exactly the rightmost partial tile column, full height.
-Height partials decode correctly, so this is specific to the horizontal axis.
-
-The entropy decode itself desynchronises — those blocks report 78 to 167 bytes of
-over-read — so the code-block width for the narrow column is over-computed; it is not
-merely a stitching error. The suspect is the interaction between the band canvas origin
-and the precinct bounds in `extractTileData`, not `subbandDimensions`, whose Eq. B-15
-arithmetic checks out by hand for these cases.
-
-**This is detected, not silent**: strict validation rejects all four cases, so a caller
-gets `J2KError.corruptedCodestream` rather than a wrong image.
 
 ### Vertically causal context is parsed but not implemented
 

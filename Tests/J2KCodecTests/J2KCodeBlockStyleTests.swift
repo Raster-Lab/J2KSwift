@@ -187,6 +187,35 @@ final class J2KCodeBlockStyleTests: XCTestCase {
                        "an oversized nominal tile must decode identically to an exact one")
     }
 
+    /// A resolution level's precinct grid must be sized from every sub-band
+    /// it carries, not from HL alone.
+    ///
+    /// HL carries a half-sample x offset and HH carries both (Eq. B-15), so
+    /// for a tile the image edge cuts to a narrow strip either can come out
+    /// exactly zero wide while LH does not. Sizing the grid from HL then
+    /// skipped the whole resolution level — and the packet that really was
+    /// there — desynchronising every packet after it.
+    ///
+    /// A 4-wide tile at x = 256 with three decomposition levels is such a
+    /// case: HL and HH are empty, LH is one sample wide.
+    func testResolutionGridCoversEveryBandOfTheLevel() {
+        let hl = DecoderPipeline.subbandDimensionsForTesting(
+            tileWidth: 4, tileHeight: 128, tileOriginX: 256, tileOriginY: 0,
+            levels: 3, resLevel: 1, subband: .hl)
+        let lh = DecoderPipeline.subbandDimensionsForTesting(
+            tileWidth: 4, tileHeight: 128, tileOriginX: 256, tileOriginY: 0,
+            levels: 3, resLevel: 1, subband: .lh)
+        XCTAssertEqual(hl.width, 0, "fixture no longer exercises a degenerate HL")
+        XCTAssertGreaterThan(lh.width, 0, "fixture no longer has a live LH")
+
+        let grid = DecoderPipeline.resolutionGridSize(
+            tileWidth: 4, tileHeight: 128, tileOriginX: 256, tileOriginY: 0,
+            levels: 3, resLevel: 1)
+        XCTAssertEqual(grid.width, lh.width,
+                       "an empty HL must not shrink the level's precinct grid")
+        XCTAssertGreaterThan(grid.height, 0)
+    }
+
     // MARK: - Fixtures
 
     private func makeImage(width: Int, height: Int) -> J2KImage {

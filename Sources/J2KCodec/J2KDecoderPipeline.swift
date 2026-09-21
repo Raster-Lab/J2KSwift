@@ -2905,11 +2905,20 @@ struct DecoderPipeline: Sendable {
                 // For r > 0, all sub-bands HL/LH/HH share the same grid;
                 // use one of them as a reference. For r = 0, the LL band's
                 // dimensions define the grid.
-                let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
-                let (sbWRef, sbHRef) = Self.subbandDimensions(
+                // The precinct grid spans the whole resolution level, so it
+                // must be sized from every sub-band present — not from HL
+                // alone. HL carries an x half-offset and HH both, so for a
+                // tile the image edge cuts to a narrow strip either can come
+                // out exactly zero wide while LH does not. Taking HL as the
+                // reference then skipped the entire resolution level, and
+                // with it a packet that is really there, desynchronising
+                // every packet after it. That is the whole of the remaining
+                // partial-tile failure, and it is x-specific precisely
+                // because the offsets are.
+                let (sbWRef, sbHRef) = Self.resolutionGridSize(
                     tileWidth: tileWidth, tileHeight: tileHeight,
                     tileOriginX: tileOriginX, tileOriginY: tileOriginY,
-                    levels: levels, resLevel: resLevel, subband: referenceSubband)
+                    levels: levels, resLevel: resLevel)
                 guard sbWRef > 0 && sbHRef > 0 else { continue }
 
                 let (pw, ph) = bandPrecinctSize(forRes: resLevel)
@@ -3188,11 +3197,13 @@ struct DecoderPipeline: Sendable {
             for resLevel in 0...levels {
                 for compIdx in 0..<numComponents {
                     let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
-                    let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
-                    let (sbWRef, sbHRef) = Self.subbandDimensions(
+                    // See `extractTileData`: the precinct grid spans the
+                    // resolution level, so a degenerate HL must not stand in
+                    // for it.
+                    let (sbWRef, sbHRef) = Self.resolutionGridSize(
                         tileWidth: tileWidth, tileHeight: tileHeight,
                         tileOriginX: tileOriginX, tileOriginY: tileOriginY,
-                        levels: levels, resLevel: resLevel, subband: referenceSubband)
+                        levels: levels, resLevel: resLevel)
                     guard sbWRef > 0 && sbHRef > 0 else { continue }
                     let (pw, ph) = bandPrecinctSize(forRes: resLevel)
                     let numPrecinctsX = max(1, (sbWRef + pw - 1) / pw)
@@ -3359,6 +3370,46 @@ struct DecoderPipeline: Sendable {
     /// for HL, (0, 2^(d-1)) for LH, (2^(d-1), 2^(d-1)) for HH; and
     /// d is the decomposition depth (= `levels` for LL, = `levels -
     /// resLevel + 1` for HL/LH/HH at resolution `resLevel`).
+    /// The extent of a resolution level's precinct grid, in band-local
+    /// coordinates.
+    ///
+    /// For `resLevel == 0` that is the LL band. Above it, the level is
+    /// carried by HL, LH and HH together, and the grid must cover all three:
+    /// the half-sample offsets in Eq. B-15 mean a narrow tile can make HL or
+    /// HH exactly zero wide while LH is not, and sizing the grid from HL
+    /// alone then drops a resolution level that is really present.
+    /// Test hook for ``subbandDimensions(tileWidth:tileHeight:tileOriginX:tileOriginY:levels:resLevel:subband:)``,
+    /// which is private because nothing outside this file should size a band.
+    static func subbandDimensionsForTesting(
+        tileWidth: Int, tileHeight: Int,
+        tileOriginX: Int, tileOriginY: Int,
+        levels: Int, resLevel: Int, subband: J2KSubband
+    ) -> (width: Int, height: Int) {
+        subbandDimensions(
+            tileWidth: tileWidth, tileHeight: tileHeight,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+            levels: levels, resLevel: resLevel, subband: subband)
+    }
+
+    static func resolutionGridSize(
+        tileWidth: Int, tileHeight: Int,
+        tileOriginX: Int, tileOriginY: Int,
+        levels: Int, resLevel: Int
+    ) -> (width: Int, height: Int) {
+        let bands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
+        var width = 0
+        var height = 0
+        for band in bands {
+            let (w, h) = subbandDimensions(
+                tileWidth: tileWidth, tileHeight: tileHeight,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                levels: levels, resLevel: resLevel, subband: band)
+            width = max(width, w)
+            height = max(height, h)
+        }
+        return (width, height)
+    }
+
     private static func subbandDimensions(
         tileWidth: Int, tileHeight: Int,
         tileOriginX: Int = 0, tileOriginY: Int = 0,
