@@ -694,6 +694,24 @@ struct BitPlaneCoder: Sendable {
             var passDataSegments: [Data] = []
             var runningSegmentTotal = 0
 
+            // Codeword segmentation. This used to terminate after every pass
+            // whenever segmentation was in play at all — right under
+            // termination-on-each-pass, wrong under selective bypass, where
+            // the standard's shape is ten passes then alternating two and
+            // one. One segment per pass produced codestreams no conformant
+            // decoder could read.
+            //
+            // `.predictable` counts as terminate-each-pass here to preserve
+            // this encoder's existing `.errorResilient` behaviour, which
+            // predates the style bits being modelled separately.
+            let terminateEachPass = options.terminateOnEachPass
+                || options.terminationMode == .predictable
+            var segmentPassesRemaining = 0
+            var previousSegmentCapacity: Int? = nil
+            var segmentIndex = 0
+            var currentSegmentIsRaw = false
+            var rawEncoder = RawBypassEncoder()
+
             var passCount = 0
             let maxPassLimit = maxPasses ?? (3 * activeBitPlanes)
             cumulativePassBytes.reserveCapacity(maxPassLimit)
@@ -705,23 +723,36 @@ struct BitPlaneCoder: Sendable {
 
             for bitPlane in stride(from: activeBitPlanes - 1, through: 0, by: -1) {
                 let bitMask: UInt32 = 1 << bitPlane
-                let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
                 let isFirstBitPlane = (bitPlane == activeBitPlanes - 1)
 
                 if !isFirstBitPlane && passCount < maxPassLimit {
                     #if EBCOT_DEBUG_TRACE
                     EBCOTDebugTrace.shared.logEncode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
                     #endif
-                    let sppDelta = encodeSignificancePropagationPass(
-                        magnitudes: magnitudes,
-                        signs: signArray,
-                        states: &states,
-                        bitMask: bitMask,
-                        encoder: &encoder,
-                        contexts: &contextStates,
-                        recon: &recon,
-                        bitPlane: bitPlane
-                    )
+                    // Open the codeword segment this pass belongs to.
+                    if usePerPassSegments && segmentPassesRemaining == 0 {
+                        let capacity = DecoderPipeline.segmentCapacity(
+                            index: segmentIndex,
+                            previousMaxPasses: previousSegmentCapacity,
+                            terminateOnEachPass: terminateEachPass,
+                            bypass: options.bypassEnabled)
+                        segmentPassesRemaining = capacity
+                        previousSegmentCapacity = capacity
+                        segmentIndex += 1
+                        currentSegmentIsRaw = options.bypassEnabled && passCount >= 10
+                        if currentSegmentIsRaw { rawEncoder = RawBypassEncoder() }
+                    }
+                    let sppDelta = currentSegmentIsRaw
+                        ? encodeSignificancePropagationPassBypass(
+                            magnitudes: magnitudes, signs: signArray,
+                            states: &states, bitMask: bitMask,
+                            bypassEncoder: &rawEncoder,
+                            recon: &recon, bitPlane: bitPlane)
+                        : encodeSignificancePropagationPass(
+                            magnitudes: magnitudes, signs: signArray,
+                            states: &states, bitMask: bitMask,
+                            encoder: &encoder, contexts: &contextStates,
+                            recon: &recon, bitPlane: bitPlane)
                     #if EBCOT_DEBUG_TRACE
                     if EBCOTDebugTrace.shared.enabled {
                         let sigCount = states.filter { $0.contains(.significant) }.count
@@ -742,11 +773,20 @@ struct BitPlaneCoder: Sendable {
                     passCount += 1
 
                     if usePerPassSegments {
-                        let passData = encoder.finish(mode: options.terminationMode)
-                        passDataSegments.append(passData)
-                        encoder.reset()
-                        contextStates.reset()
-                        runningSegmentTotal += passData.count
+                        segmentPassesRemaining -= 1
+                        if segmentPassesRemaining == 0 {
+                            let passData = currentSegmentIsRaw
+                                ? rawEncoder.finish()
+                                : encoder.finish(mode: options.terminationMode)
+                            passDataSegments.append(passData)
+                            if !currentSegmentIsRaw { encoder.reset() }
+                            // Contexts survive a segment boundary unless RESET asks
+                            // otherwise; terminating and resetting are separate bits.
+                            if options.resetOnEachPass { contextStates.reset() }
+                            runningSegmentTotal += passData.count
+                        }
+                        // Truncation is only possible at a segment boundary, so the byte
+                        // count repeats for passes inside one segment.
                         cumulativePassBytes.append(runningSegmentTotal)
                     } else {
                         let cp = encoder.checkpoint()
@@ -761,25 +801,26 @@ struct BitPlaneCoder: Sendable {
                     #if EBCOT_DEBUG_TRACE
                     EBCOTDebugTrace.shared.logEncode("=== MAGREF bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
                     #endif
-                    if useBypass {
-                        var bypassEncoder = RawBypassEncoder()
-                        let mrpDelta = encodeMagnitudeRefinementPassBypass(
-                            magnitudes: magnitudes,
-                            states: &states,
-                            bitMask: bitMask,
-                            bypassEncoder: &bypassEncoder,
-                            recon: &recon,
-                            bitPlane: bitPlane
-                        )
-                        passCount += 1
-                        let passData = bypassEncoder.finish()
-                        passDataSegments.append(passData)
-                        runningSegmentTotal += passData.count
-                        cumulativePassBytes.append(runningSegmentTotal)
-                        cumulativeDistReduction += mrpDelta
-                        cumulativePassDistortion.append(cumulativeDistReduction)
-                    } else {
-                        let mrpDelta = encodeMagnitudeRefinementPass(
+                    // Open the codeword segment this pass belongs to.
+                    if usePerPassSegments && segmentPassesRemaining == 0 {
+                        let capacity = DecoderPipeline.segmentCapacity(
+                            index: segmentIndex,
+                            previousMaxPasses: previousSegmentCapacity,
+                            terminateOnEachPass: terminateEachPass,
+                            bypass: options.bypassEnabled)
+                        segmentPassesRemaining = capacity
+                        previousSegmentCapacity = capacity
+                        segmentIndex += 1
+                        currentSegmentIsRaw = options.bypassEnabled && passCount >= 10
+                        if currentSegmentIsRaw { rawEncoder = RawBypassEncoder() }
+                    }
+                    do {
+                        let mrpDelta = currentSegmentIsRaw
+                            ? encodeMagnitudeRefinementPassBypass(
+                                magnitudes: magnitudes, states: &states,
+                                bitMask: bitMask, bypassEncoder: &rawEncoder,
+                                recon: &recon, bitPlane: bitPlane)
+                            : encodeMagnitudeRefinementPass(
                             magnitudes: magnitudes,
                             states: &states,
                             bitMask: bitMask,
@@ -802,11 +843,20 @@ struct BitPlaneCoder: Sendable {
                         passCount += 1
 
                         if usePerPassSegments {
-                            let passData = encoder.finish(mode: options.terminationMode)
-                            passDataSegments.append(passData)
-                            encoder.reset()
-                            contextStates.reset()
-                            runningSegmentTotal += passData.count
+                            segmentPassesRemaining -= 1
+                            if segmentPassesRemaining == 0 {
+                                let passData = currentSegmentIsRaw
+                                    ? rawEncoder.finish()
+                                    : encoder.finish(mode: options.terminationMode)
+                                passDataSegments.append(passData)
+                                if !currentSegmentIsRaw { encoder.reset() }
+                                // Contexts survive a segment boundary unless RESET asks
+                                // otherwise; terminating and resetting are separate bits.
+                                if options.resetOnEachPass { contextStates.reset() }
+                                runningSegmentTotal += passData.count
+                            }
+                            // Truncation is only possible at a segment boundary, so the byte
+                            // count repeats for passes inside one segment.
                             cumulativePassBytes.append(runningSegmentTotal)
                         } else {
                             let cp = encoder.checkpoint()
@@ -822,6 +872,19 @@ struct BitPlaneCoder: Sendable {
                     #if EBCOT_DEBUG_TRACE
                     EBCOTDebugTrace.shared.logEncode("=== CLEANUP bitPlane=\(bitPlane) pass=\(passCount) ===", x: -1, y: -1)
                     #endif
+                    // Open the codeword segment this pass belongs to.
+                    if usePerPassSegments && segmentPassesRemaining == 0 {
+                        let capacity = DecoderPipeline.segmentCapacity(
+                            index: segmentIndex,
+                            previousMaxPasses: previousSegmentCapacity,
+                            terminateOnEachPass: terminateEachPass,
+                            bypass: options.bypassEnabled)
+                        segmentPassesRemaining = capacity
+                        previousSegmentCapacity = capacity
+                        segmentIndex += 1
+                        currentSegmentIsRaw = false
+                        if currentSegmentIsRaw { rawEncoder = RawBypassEncoder() }
+                    }
                     let cupDelta = encodeCleanupPass(
                         magnitudes: magnitudes,
                         signs: signArray,
@@ -853,11 +916,20 @@ struct BitPlaneCoder: Sendable {
                     passCount += 1
 
                     if usePerPassSegments {
-                        let passData = encoder.finish(mode: options.terminationMode)
-                        passDataSegments.append(passData)
-                        encoder.reset()
-                        contextStates.reset()
-                        runningSegmentTotal += passData.count
+                        segmentPassesRemaining -= 1
+                        if segmentPassesRemaining == 0 {
+                            let passData = currentSegmentIsRaw
+                                ? rawEncoder.finish()
+                                : encoder.finish(mode: options.terminationMode)
+                            passDataSegments.append(passData)
+                            if !currentSegmentIsRaw { encoder.reset() }
+                            // Contexts survive a segment boundary unless RESET asks
+                            // otherwise; terminating and resetting are separate bits.
+                            if options.resetOnEachPass { contextStates.reset() }
+                            runningSegmentTotal += passData.count
+                        }
+                        // Truncation is only possible at a segment boundary, so the byte
+                        // count repeats for passes inside one segment.
                         cumulativePassBytes.append(runningSegmentTotal)
                     } else {
                         let cp = encoder.checkpoint()
@@ -1232,6 +1304,86 @@ struct BitPlaneCoder: Sendable {
                         }
                     }
                     } // ctxPtr
+                }
+            }
+        }
+        return passDistortion
+    }
+
+    /// Encodes a significance-propagation pass raw, under selective
+    /// arithmetic bypass (ISO/IEC 15444-1 Annex D.6).
+    ///
+    /// Lazy mode codes **both** the significance-propagation and the
+    /// magnitude-refinement passes raw; only cleanup stays arithmetically
+    /// coded. Only the magnitude-refinement half existed, so this encoder
+    /// produced codestreams no conformant decoder could read.
+    ///
+    /// Coefficient selection matches the arithmetic variant. Significance and
+    /// sign are each a single raw bit: no context, and no XOR against a
+    /// predicted sign.
+    private func encodeSignificancePropagationPassBypass(
+        magnitudes: [UInt32],
+        signs: [Bool],
+        states: inout [CoefficientState],
+        bitMask: UInt32,
+        bypassEncoder: inout RawBypassEncoder,
+        recon: inout [UInt32],
+        bitPlane: Int
+    ) -> Double {
+        let stripeHeight = 4
+        let w = width
+        let h = height
+        let halfBit: UInt32 = bitPlane > 0 ? UInt32(1 << (bitPlane - 1)) : 0
+        let reconVal = UInt32(1 << bitPlane) | halfBit
+        var passDistortion: Double = 0
+
+        magnitudes.withUnsafeBufferPointer { magBuf in
+            signs.withUnsafeBufferPointer { signBuf in
+                states.withUnsafeMutableBufferPointer { stateBuf in
+                    recon.withUnsafeMutableBufferPointer { reconBuf in
+                        let magPtr = magBuf.baseAddress!
+                        let signPtr = signBuf.baseAddress!
+                        let statePtr = stateBuf.baseAddress!
+                        let reconPtr = reconBuf.baseAddress!
+                        let sigMask = CoefficientState.significant.rawValue
+                        let codedMask = CoefficientState.codedThisPass.rawValue
+                        let signStateMask = CoefficientState.signBit.rawValue
+
+                        for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                            let stripeEnd = min(stripeY + stripeHeight, h)
+
+                            for x in 0..<w {
+                                for y in stripeY..<stripeEnd {
+                                    let idx = y &* w &+ x
+
+                                    let rawCtx = contextModeler.sppSigContextOrSkip(
+                                        x: x, y: y, width: w, height: h, states: statePtr)
+                                    guard rawCtx != 0xFF else { continue }
+
+                                    let isSignificant = (magPtr[idx] & bitMask) != 0
+                                    bypassEncoder.encode(symbol: isSignificant)
+
+                                    if isSignificant {
+                                        let signBit = signPtr[idx]
+                                        bypassEncoder.encode(symbol: signBit)
+
+                                        var newState = sigMask | codedMask
+                                        if signBit { newState |= signStateMask }
+                                        statePtr[idx] = CoefficientState(rawValue: newState)
+
+                                        if options.trackDistortion {
+                                            reconPtr[idx] = reconVal
+                                            let m = Int64(magPtr[idx])
+                                            let e = m &- Int64(reconVal)
+                                            passDistortion += Double(m &* m &- e &* e)
+                                        }
+                                    } else {
+                                        statePtr[idx] = CoefficientState(rawValue: codedMask)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

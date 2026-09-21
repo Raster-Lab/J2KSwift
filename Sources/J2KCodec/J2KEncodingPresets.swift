@@ -178,6 +178,24 @@ public struct J2KEncodingConfiguration: Sendable {
     /// - More layers = finer quality progression, slower encoding
     public var qualityLayers: Int
 
+    /// Emit selective arithmetic coding bypass ("lazy") mode.
+    ///
+    /// After the first ten coding passes the significance-propagation and
+    /// magnitude-refinement passes are written raw instead of through the MQ
+    /// coder, trading a little compression for decode speed. Sets bit 0 of
+    /// the code-block style byte.
+    ///
+    /// Off by default, and set as a property rather than an initialiser
+    /// parameter so the memberwise initialiser's signature — and therefore
+    /// every caller's binary compatibility — is untouched.
+    ///
+    /// Until this option existed the encoder had no way to
+    /// turn bypass on, so its bypass path was unreachable — and, as it turned
+    /// out, non-conformant: it terminated a codeword segment at every pass
+    /// rather than using the standard's 10/2/1 shape, and coded only the
+    /// magnitude-refinement pass raw.
+    public var selectiveArithmeticBypass: Bool = false
+
     /// Progression order for packet organization.
     ///
     /// Determines the order in which image data is encoded and streamed:

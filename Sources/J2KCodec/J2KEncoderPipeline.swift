@@ -269,7 +269,10 @@ struct EncoderPipeline: Sendable {
     /// For lossless, distortion tracking is disabled — all passes are always retained
     /// so the Int64 multiply/Double accumulation in each inner loop is dead work.
     private var standardEBCOTCodingOptions: CodingOptions {
-        CodingOptions(trackDistortion: !config.lossless)
+        CodingOptions(
+            bypassEnabled: config.selectiveArithmeticBypass,
+            bypassThreshold: config.selectiveArithmeticBypass ? 4 : 0,
+            trackDistortion: !config.lossless)
     }
 
     /// Returns an EBCOT pass cap for the current quality target.
@@ -7403,21 +7406,57 @@ struct EncoderPipeline: Sendable {
                     CFAbsoluteTimeGetCurrent() - tPasses0)
 
                 // 4. Data length per ISO 15444-1 B.10.7
-                // Total bits = Lblock + floor(log2(numpasses))
+                //
+                // One length per MQ codeword segment, not one per code-block.
+                // Under selective bypass or termination-on-each-pass a block
+                // is several segments, and B.10.7.2 signals each. Writing a
+                // single total made every such codestream unreadable by a
+                // conformant decoder, which computes the segment count from
+                // the coding style and so expects several lengths.
                 let tLen0 = CFAbsoluteTimeGetCurrent()
-                let length = block.data.count
-                let passLog = passes > 1 ? (Int.bitWidth - passes.leadingZeroBitCount - 1) : 0
+                let segmentLengths: [Int]
+                if block.passSegmentLengths.count > 1 {
+                    segmentLengths = block.passSegmentLengths
+                } else {
+                    segmentLengths = [block.data.count]
+                }
+                // The shape the decoder will assume, from the coding style.
+                let expectedSegments = DecoderPipeline.segmentPassCounts(
+                    numPasses: passes,
+                    terminateOnEachPass: standardEBCOTCodingOptions.terminateOnEachPass
+                        || standardEBCOTCodingOptions.terminationMode == .predictable,
+                    bypass: standardEBCOTCodingOptions.bypassEnabled)
+                let passesPerSegment: [Int] = expectedSegments.count == segmentLengths.count
+                    ? expectedSegments
+                    : [passes]
+                let lengths = expectedSegments.count == segmentLengths.count
+                    ? segmentLengths
+                    : [block.data.count]
+
+                // Lblock is signalled once and must fit every segment.
                 var lblock = 3
-                var totalBits = lblock + passLog
-                let bitsNeeded = length > 0 ? (Int.bitWidth - length.leadingZeroBitCount) : 1
-                while totalBits < bitsNeeded {
+                func bits(_ index: Int) -> Int {
+                    let n = passesPerSegment[index]
+                    let passLog = n > 1 ? (Int.bitWidth - n.leadingZeroBitCount - 1) : 0
+                    return lblock + passLog
+                }
+                func fitsAll() -> Bool {
+                    for (index, length) in lengths.enumerated() {
+                        let needed = length > 0 ? (Int.bitWidth - length.leadingZeroBitCount) : 1
+                        if bits(index) < needed { return false }
+                    }
+                    return true
+                }
+                while !fitsAll() {
                     writer.writeBit(true)
                     lblock += 1
-                    totalBits = lblock + passLog
                 }
                 writer.writeBit(false)
-                if totalBits > 0 {
-                    try writer.writeBits(UInt32(length), count: totalBits)
+                for (index, length) in lengths.enumerated() {
+                    let count = bits(index)
+                    if count > 0 {
+                        try writer.writeBits(UInt32(length), count: count)
+                    }
                 }
                 J2KTier2Timings.recordLengthSignaling(
                     CFAbsoluteTimeGetCurrent() - tLen0)

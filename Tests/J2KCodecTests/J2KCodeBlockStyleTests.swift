@@ -216,6 +216,62 @@ final class J2KCodeBlockStyleTests: XCTestCase {
         XCTAssertGreaterThan(grid.height, 0)
     }
 
+    // MARK: - Encoder
+
+    /// A bypass encode must signal bit 0 and round-trip exactly.
+    ///
+    /// The encoder had no way to turn bypass on at all, so its bypass path
+    /// was unreachable — and non-conformant: it terminated a codeword
+    /// segment at every pass rather than using the standard's 10/2/1 shape,
+    /// coded only the magnitude-refinement pass raw, and signalled a single
+    /// data length where B.10.7.2 asks for one per segment.
+    ///
+    /// Kakadu decodes the output of this configuration bit-exactly; that
+    /// check needs `kdu_expand` so it lives in
+    /// `Documentation/CODING_MODES.md` rather than here. What this test can
+    /// pin is that the mode is reachable, signalled, and self-consistent.
+    func testBypassEncodeSignalsTheBitAndRoundTrips() async throws {
+        let image = makeImage(width: 128, height: 96)
+        var configuration = J2KEncodingConfiguration(lossless: true)
+        configuration.selectiveArithmeticBypass = true
+
+        let encoded = try await J2KEncoder(encodingConfiguration: configuration).encode(image)
+
+        // SPcod's code-block style byte must carry bit 0.
+        let style = try XCTUnwrap(codeBlockStyleByte(of: encoded))
+        XCTAssertEqual(style & 0x01, 0x01, "bypass was not signalled in SPcod")
+
+        // And strict validation must accept it — a desynchronised decode
+        // shows up as unconsumed segment bytes.
+        let (decoded, report) = try await J2KDecoder().decodeWithIntegrity(encoded)
+        XCTAssertTrue(report.isIntact, "bypass round-trip reported: \(report.summary)")
+        XCTAssertEqual(samples(decoded), samples(image))
+    }
+
+    /// Without the option, nothing changes: bit 0 stays clear.
+    func testBypassIsOffByDefault() async throws {
+        let image = makeImage(width: 64, height: 48)
+        let encoded = try await J2KEncoder(
+            encodingConfiguration: J2KEncodingConfiguration(lossless: true)).encode(image)
+        let style = try XCTUnwrap(codeBlockStyleByte(of: encoded))
+        XCTAssertEqual(style & 0x01, 0x00)
+    }
+
+    /// Reads SPcod's code-block style byte out of a codestream's COD marker.
+    private func codeBlockStyleByte(of data: Data) -> UInt8? {
+        let b = [UInt8](data)
+        var i = 0
+        while i + 3 < b.count {
+            if b[i] == 0xFF && b[i + 1] == 0x52 {          // COD
+                // Lcod(2) Scod(1) SGcod(4) then SPcod: levels, cbw, cbh, style
+                let spcod = i + 2 + 2 + 1 + 4
+                return spcod + 3 < b.count ? b[spcod + 3] : nil
+            }
+            i += 1
+        }
+        return nil
+    }
+
     // MARK: - Fixtures
 
     private func makeImage(width: Int, height: Int) -> J2KImage {

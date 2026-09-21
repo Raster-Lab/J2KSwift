@@ -140,6 +140,32 @@ Every conformant reversible stream in the corpus now decodes sample-exactly.
 Reproduce with `Scripts/generate-integrity-corpus.sh` and the scoring harness described
 in `Documentation/INTEGRITY_CALIBRATION.md`.
 
+## The encoder
+
+Fixing the decoder exposed the same faults on the encoder side. Its bypass path was
+**unreachable** — nothing set `bypassEnabled`, so bit 0 was never written and no J2KSwift
+bypass codestream has ever existed — and it was non-conformant three ways: it terminated
+a codeword segment at every pass instead of using the 10/2/1 shape, coded only the
+magnitude-refinement pass raw, and signalled a single data length where B.10.7.2 asks
+for one per segment.
+
+All three are fixed, and `J2KEncodingConfiguration.selectiveArithmeticBypass` makes the
+mode reachable. Verified against an independent decoder, which is the only check that
+means anything here:
+
+```
+$ kdu_expand -i j2kswift_plain.j2k  -o out.pgm     → EXACT  (0/12288 differ)
+$ kdu_expand -i j2kswift_bypass.j2k -o out.pgm     → EXACT  (0/12288 differ)
+```
+
+Before the fix, the same bypass file came back **12,288/12,288 samples wrong, maxAbs
+65,287** — garbage — while the plain file was already exact. That is the difference
+between a self-consistent round-trip and a conformant one, and it is why the encoder
+could not be validated against itself.
+
+The option is a property rather than an initialiser parameter, so the memberwise
+initialiser's signature — and every caller's binary compatibility — is untouched.
+
 ## Still wrong
 
 ### Vertically causal context is parsed but not implemented
