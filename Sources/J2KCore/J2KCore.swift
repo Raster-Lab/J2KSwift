@@ -719,6 +719,15 @@ public enum J2KColorSpace: Sendable, Equatable {
 
 /// Errors that can occur during JPEG 2000 operations.
 public enum J2KError: Error, Sendable {
+    /// The codestream's entropy data shows signs of corruption.
+    ///
+    /// Raised by ``J2KDecoder`` in ``J2KValidationMode/strict``. The
+    /// arithmetic decoder cannot detect corruption itself — it is a total
+    /// function by construction — so this reports the byte-accounting
+    /// discrepancy that revealed it. The attached report says exactly what
+    /// was found.
+    case corruptedCodestream(J2KCodestreamIntegrity)
+
     /// An invalid parameter was provided.
     case invalidParameter(String)
 
@@ -765,6 +774,8 @@ extension J2KError: LocalizedError {
     /// A localized description of the error.
     public var errorDescription: String? {
         switch self {
+        case .corruptedCodestream(let report):
+            return "Corrupted codestream: \(report.summary)"
         case .invalidParameter(let message):
             return "Invalid parameter: \(message)"
         case .notImplemented(let message):

@@ -217,6 +217,19 @@ struct CodestreamMetadata: Sendable {
 /// 6. Inverse Colour Transform — YCbCr → RGB conversion
 /// 7. Image Reconstruction — assemble final image
 struct DecoderPipeline: Sendable {
+    /// Collects entropy-segment byte accounting during the decode.
+    ///
+    /// The MQ arithmetic decoder cannot fail (ISO/IEC 15444-1 Annex C), so a
+    /// corrupted entropy payload decodes to a plausible-looking wrong image
+    /// with no error raised anywhere. This gathers the one signal that does
+    /// separate the two: whether each code-block consumed the segment the
+    /// packet header declared for it. See ``J2KCodestreamIntegrity``.
+    ///
+    /// A reference type so the concurrent entropy chunks can fold into it
+    /// without changing the shape of the pipeline's value semantics. `nil`
+    /// disables collection entirely.
+    var integrityCollector: J2KIntegrityCollector? = nil
+
     /// Opt-in flag for GPU HT cleanup-pass entropy decode.
     ///
     /// When `true` AND the codestream is HTJ2K conformant cleanup-only
@@ -2136,6 +2149,11 @@ struct DecoderPipeline: Sendable {
         var quantizationSteps: (steps: [String: Double], guardBits: Int, bandKb: [String: Int]) = ([:], 2, [:])
         var tiles: [(tileIndex: Int, tileData: Data)] = []
 
+        // ISO/IEC 15444-1 requires the codestream to end with EOC. Without
+        // this, a transfer cut exactly at the EOC boundary decodes bit-exactly
+        // and is indistinguishable from a complete file.
+        var sawEndOfCodestream = false
+
         // Parse main header markers
         while reader.position < data.count {
             let marker = try reader.readMarker()
@@ -2183,8 +2201,13 @@ struct DecoderPipeline: Sendable {
             }
 
             if marker == J2KMarker.eoc.rawValue {
+                sawEndOfCodestream = true
                 break
             }
+        }
+
+        if !sawEndOfCodestream {
+            integrityCollector?.recordMissingEOC()
         }
 
         guard var meta = metadata else {
@@ -3707,12 +3730,17 @@ struct DecoderPipeline: Sendable {
                 return b
             }()
 
+            let collector = integrityCollector
             let allResults: [([Int32], [Bool])?] = try await withThrowingTaskGroup(
                 of: [(Int, [Int32], [Bool])].self
             ) { group in
                 for bucket in buckets where !bucket.isEmpty {
                     group.addTask(priority: .high) {
                         var chunkResults: [(Int, [Int32], [Bool])] = []
+                        // Accumulated locally and folded into the shared
+                        // collector once, below — the lock stays off the
+                        // per-code-block path.
+                        var chunkIntegrity = J2KIntegrityBuilder()
                         chunkResults.reserveCapacity(bucket.count)
                         // One scratch buffer per task — reused across all blocks in the bucket
                         let scratch = useHT ? nil : DecoderScratchBuffers()
@@ -3771,17 +3799,30 @@ struct DecoderPipeline: Sendable {
                                     passeCount: block.passCount,
                                     zeroBitPlanes: block.zeroBitPlanes
                                 )
-                                coeffs = try blockDecoder.decode(
-                                    codeBlock: codeBlock,
-                                    bitDepth: bitDepth,
-                                    options: decodeOptions,
-                                    irreversible: isIrreversible,
-                                    scratch: scratch
-                                )
+                                if collector != nil {
+                                    let decoded = try blockDecoder.decodeWithIntegrity(
+                                        codeBlock: codeBlock,
+                                        bitDepth: bitDepth,
+                                        options: decodeOptions,
+                                        irreversible: isIrreversible,
+                                        scratch: scratch
+                                    )
+                                    coeffs = decoded.coefficients
+                                    chunkIntegrity.record(block: i, decoded.integrity)
+                                } else {
+                                    coeffs = try blockDecoder.decode(
+                                        codeBlock: codeBlock,
+                                        bitDepth: bitDepth,
+                                        options: decodeOptions,
+                                        irreversible: isIrreversible,
+                                        scratch: scratch
+                                    )
+                                }
                                 htPartiallyRefined = []
                             }
                             chunkResults.append((i, coeffs, htPartiallyRefined))
                         }
+                        collector?.absorb(chunkIntegrity)
                         return chunkResults
                     }
                 }
@@ -3883,12 +3924,25 @@ struct DecoderPipeline: Sendable {
                         passeCount: block.passCount,
                         zeroBitPlanes: block.zeroBitPlanes
                     )
-                    coeffs = try decoder.decode(
-                        codeBlock: codeBlock,
-                        bitDepth: bitDepth,
-                        options: decodeOptions,
-                        irreversible: isIrreversible
-                    )
+                    if let collector = integrityCollector {
+                        let decoded = try decoder.decodeWithIntegrity(
+                            codeBlock: codeBlock,
+                            bitDepth: bitDepth,
+                            options: decodeOptions,
+                            irreversible: isIrreversible
+                        )
+                        coeffs = decoded.coefficients
+                        var single = J2KIntegrityBuilder()
+                        single.record(block: blockIdx, decoded.integrity)
+                        collector.absorb(single)
+                    } else {
+                        coeffs = try decoder.decode(
+                            codeBlock: codeBlock,
+                            bitDepth: bitDepth,
+                            options: decodeOptions,
+                            irreversible: isIrreversible
+                        )
+                    }
                     htMask = []
                 }
 

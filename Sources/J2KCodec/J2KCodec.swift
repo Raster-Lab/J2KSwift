@@ -1062,8 +1062,22 @@ public enum J2KRecommendedDecodeAPI: Sendable {
 }
 
 public struct J2KDecoder: Sendable {
+    /// How this decoder reacts to a codestream whose entropy data fails its
+    /// integrity checks.
+    ///
+    /// Defaults to ``J2KValidationMode/strict``: a codestream showing signs of
+    /// damage is rejected rather than decoded into a plausible-looking wrong
+    /// image. Set ``J2KValidationMode/lenient`` for best-effort recovery, and
+    /// read ``decodeWithIntegrity(_:)`` to see what was found.
+    public var validation: J2KValidationMode = .strict
+
     /// Creates a new decoder.
     public init() {}
+
+    /// Creates a decoder with an explicit validation mode.
+    public init(validation: J2KValidationMode) {
+        self.validation = validation
+    }
 
     /// **v8 Phase 6.1** — warm the process-shared Metal session
     /// once at app/SDK startup so subsequent decodes don't pay
@@ -1186,6 +1200,31 @@ public struct J2KDecoder: Sendable {
     /// - Throws: ``J2KError/decodingError(_:)`` if decoding fails.
     /// - Throws: ``J2KError/invalidParameter(_:)`` if the codestream is malformed.
     public func decode(_ data: Data) async throws -> J2KImage {
+        try await decodeWithIntegrity(data).image
+    }
+
+    /// Decodes a codestream and reports what the decoder observed about the
+    /// integrity of its entropy data.
+    ///
+    /// The MQ arithmetic decoder of ISO/IEC 15444-1 Annex C cannot fail — it
+    /// is a total function, and past the end of a segment it is *defined* to
+    /// feed `0xFF` indefinitely. Corrupt entropy bytes therefore decode to a
+    /// plausible-looking image rather than to an error. The report says
+    /// whether the decoder stayed synchronised with the byte lengths the
+    /// packet headers declared, which is the signal that separates the two.
+    ///
+    /// In ``J2KValidationMode/strict`` this throws
+    /// ``J2KError/corruptedCodestream(_:)`` rather than returning a report
+    /// that is not ``J2KCodestreamIntegrity/isIntact``. Use
+    /// ``J2KValidationMode/lenient`` to receive the image and the report and
+    /// apply your own policy.
+    ///
+    /// - Returns: the decoded image and its integrity report.
+    /// - Throws: ``J2KError/corruptedCodestream(_:)`` in strict mode when the
+    ///   entropy data shows signs of damage.
+    public func decodeWithIntegrity(
+        _ data: Data
+    ) async throws -> (image: J2KImage, integrity: J2KCodestreamIntegrity) {
         // v6.2.0 D3 — pre-set the process-shared Metal session so the
         // GPU paths gated by `DecoderPipeline._gpuInverse53Enabled` /
         // `_gpuHTEntropyEnabled` (D1 #314 / D2 #315) actually
@@ -1197,7 +1236,14 @@ public struct J2KDecoder: Sendable {
         // consult `metalSession`.
         var pipeline = DecoderPipeline()
         pipeline.metalSession = J2KMetalSession.processShared
-        return try await pipeline.decode(data)
+        let collector = J2KIntegrityCollector()
+        pipeline.integrityCollector = collector
+        let image = try await pipeline.decode(data)
+        let report = collector.report(isPartialDecode: false)
+        if validation == .strict, !report.isIntact {
+            throw J2KError.corruptedCodestream(report)
+        }
+        return (image, report)
     }
 
     /// v10.5.0 Stage B.1+B.2 — internal entry point that sets up
