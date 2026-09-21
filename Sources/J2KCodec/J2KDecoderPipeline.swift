@@ -266,6 +266,25 @@ struct DecoderPipeline: Sendable {
     /// (preserves v10.4.0 and earlier behaviour).
     var outputDimensions: (width: Int, height: Int)? = nil
 
+    /// SPIKE — caller-owned destination for the final reconstructed samples.
+    ///
+    /// When set, `reconstructImage` writes each component's final samples into
+    /// the caller's plane instead of allocating component `Data`. It is an
+    /// owner rather than a pointer because `decode` is `async` and MEM-08
+    /// forbids a borrow spanning an `await`; the pointer is taken only inside
+    /// the synchronous final-output stage.
+    var sharedDestination: J2KSharedDestination? = nil
+
+    /// SPIKE — a parse result the caller already has.
+    ///
+    /// `decodeIntoShared` must inspect the codestream before it commits the
+    /// caller's destination, so without this it would parse twice and the
+    /// second parse would show up as the cost of shared storage. It is a
+    /// measurement artefact, not a property of the approach, so it is removed
+    /// rather than reported.
+    var preparsedCodestream: (CodestreamMetadata, [(tileIndex: Int, tileData: Data)])? = nil
+
+
     /// v10.6.0 ROI decode — region of interest in full-image pixel
     /// coordinates. When set, `extractTileData` keeps only code-blocks
     /// whose inverse-DWT spatial footprint (plus a conservative
@@ -491,7 +510,7 @@ struct DecoderPipeline: Sendable {
     ) async throws -> J2KImage {
         // Stage 1: Parse codestream and extract metadata
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 0.0)
-        let (metadata, tiles) = try parseCodestream(data)
+        let (metadata, tiles) = try preparsedCodestream ?? parseCodestream(data)
         reportProgress(progress, stage: .codestreamParsing, stageProgress: 1.0)
 
         // v10.5.0 Stage B.2 — `outputDimensions` is computed by the
@@ -5669,8 +5688,6 @@ struct DecoderPipeline: Sendable {
         _ components: [[Double]],
         metadata: CodestreamMetadata
     ) throws -> J2KImage {
-        var imageComponents: [J2KComponent] = []
-
         // v10.5.0 Stage B.2 — substitute outputDimensions for
         // metadata.width × height when partial-resolution decode is
         // active. The truncated iDWT has already produced reduced-
@@ -5678,169 +5695,132 @@ struct DecoderPipeline: Sendable {
         // must carry the reduced dimensions to stay consistent.
         let effectiveWidth = outputDimensions?.width ?? metadata.width
         let effectiveHeight = outputDimensions?.height ?? metadata.height
-
-        func clampRoundedToInt32(_ value: Double) -> Int32 {
-            let rounded = value.rounded()
-            if rounded.isNaN { return 0 }
-            if rounded >= Double(Int32.max) { return Int32.max }
-            if rounded <= Double(Int32.min) { return Int32.min }
-            return Int32(rounded)
-        }
+        let componentCount = min(components.count, metadata.components.count)
 
         // Shared chunk buffer — allocated once, reused across all components.
-        // chunkSize keeps working set (Float chunks) in L2 cache.
+        // chunkSize keeps the working set (Float chunks) in L2 cache. Only the
+        // vDSP path stages through it, so platforms without Accelerate get no
+        // buffer rather than an unused 256 KB one.
         #if canImport(Accelerate)
-        let chunkSize = 65536
-        var floatChunk = [Float](repeating: 0, count: chunkSize)
+        var floatChunk = [Float](repeating: 0, count: 65536)
+        #else
+        var floatChunk: [Float] = []
         #endif
 
-        for (idx, compData) in components.enumerated() {
-            guard idx < metadata.components.count else { break }
-
-            let compInfo = metadata.components[idx]
-            let width = effectiveWidth / compInfo.subsamplingX
-            let height = effectiveHeight / compInfo.subsamplingY
-            let componentLowerBound: Int32
-            let componentUpperBound: Int32
+        /// Clamp range implied by a component's declared depth and sign.
+        func bounds(_ compInfo: CodestreamMetadata.ComponentInfo) -> (Int32, Int32) {
             if compInfo.signed {
                 let halfRange = Int64(1) << Int64(max(compInfo.bitDepth - 1, 0))
-                componentLowerBound = Int32(max(Int64(Int32.min), -halfRange))
-                componentUpperBound = Int32(min(Int64(Int32.max), halfRange - 1))
-            } else {
-                componentLowerBound = 0
-                let maxValue = (Int64(1) << Int64(max(compInfo.bitDepth, 1))) - 1
-                componentUpperBound = Int32(min(Int64(Int32.max), maxValue))
+                return (Int32(max(Int64(Int32.min), -halfRange)),
+                        Int32(min(Int64(Int32.max), halfRange - 1)))
             }
+            let maxValue = (Int64(1) << Int64(max(compInfo.bitDepth, 1))) - 1
+            return (0, Int32(min(Int64(Int32.max), maxValue)))
+        }
 
-            // Convert Double array to Data with final rounding and clamping
-            // Pre-allocate the exact size needed
-            let bytesPerPixel = compInfo.bitDepth <= 8 ? 1 : 2
-            let pixelCount = compData.count
-            var data = Data(count: pixelCount * bytesPerPixel)
+        func geometry(_ compInfo: CodestreamMetadata.ComponentInfo) -> (width: Int, height: Int, bpp: Int) {
+            (effectiveWidth / compInfo.subsamplingX,
+             effectiveHeight / compInfo.subsamplingY,
+             compInfo.bitDepth <= 8 ? 1 : 2)
+        }
 
+        // SPIKE — caller-destination decode (MEM-10). This branch differs from
+        // the allocating one below only in where the bytes land and in which
+        // byte order is asked for: the conversion itself is the same call, so
+        // the two cannot drift and the shared path cannot quietly become a copy
+        // of a second decoded image. One exclusive write covers every
+        // component (MEM-06), so the borrow is opened once, here, and closed
+        // before this function returns — it never spans an `await` (MEM-08).
+        if let shared = sharedDestination {
+            var descriptors: [J2KComponent] = []
+            try shared.withBytes { dst in
+                var made: [J2KComponent] = []
+                for idx in 0..<componentCount {
+                    let planeByteOffset = idx * shared.planeStrideBytes
+                    let compInfo = metadata.components[idx]
+                    let (width, height, bpp) = geometry(compInfo)
+                    guard components[idx].count == width * height else {
+                        throw J2KError.internalError(
+                            "Shared decode expects \(width * height) samples for component \(idx); "
+                            + "the reconstruction stage produced \(components[idx].count)")
+                    }
+                    let (lower, upper) = bounds(compInfo)
+                    // MEM-04: the last byte this plane touches, checked against
+                    // the retained allocation before a pointer is formed.
+                    let planeBytes = (height - 1) * shared.rowBytes + width * bpp
+                    guard planeByteOffset >= 0,
+                          planeBytes >= 0,
+                          planeByteOffset + planeBytes <= dst.count else {
+                        throw J2KError.invalidParameter(
+                            "Destination holds \(dst.count) bytes; component \(idx) needs "
+                            + "\(planeByteOffset + planeBytes)")
+                    }
+                    let slice = UnsafeMutableRawBufferPointer(
+                        rebasing: dst[planeByteOffset..<(planeByteOffset + planeBytes)])
+                    components[idx].withUnsafeBufferPointer { src in
+                        j2kWriteFinalSamples(
+                            from: src, into: slice,
+                            layout: .strided(width: width, height: height,
+                                             rowBytes: shared.rowBytes, bytesPerPixel: bpp),
+                            bitDepth: compInfo.bitDepth, signed: compInfo.signed,
+                            byteOrder: shared.byteOrder,
+                            lowerBound: lower, upperBound: upper,
+                            scratch: &floatChunk)
+                    }
+                    // Geometry only. The samples are in the caller's plane, and
+                    // MEM-12 says a relabelled final image is not workspace, so
+                    // no second copy of them is made here.
+                    made.append(J2KComponent(
+                        index: idx, bitDepth: compInfo.bitDepth, signed: compInfo.signed,
+                        width: width, height: height,
+                        subsamplingX: compInfo.subsamplingX, subsamplingY: compInfo.subsamplingY,
+                        data: Data(),
+                        sampleByteOrder: compInfo.bitDepth > 8 ? shared.byteOrder : nil))
+                }
+                descriptors = made
+            }
+            return J2KImage(width: effectiveWidth, height: effectiveHeight, components: descriptors)
+        }
+
+        var imageComponents: [J2KComponent] = []
+        for idx in 0..<componentCount {
+            let compInfo = metadata.components[idx]
+            let (width, height, bpp) = geometry(compInfo)
+            let (lower, upper) = bounds(compInfo)
+
+            // Convert Double samples to Data with final rounding and clamping.
+            // Pre-allocate the exact size needed. `pixelCount` stays the source
+            // count, not width * height, so a stage that produced a different
+            // number of samples behaves exactly as it did before.
+            let pixelCount = components[idx].count
+            var data = Data(count: pixelCount * bpp)
             data.withUnsafeMutableBytes { rawBuf in
-                let ptr = rawBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
-                let hostIsLittleEndian = j2kHostIsLittleEndian()
-                let lo = Double(componentLowerBound)
-                let hi = Double(componentUpperBound)
-
-#if canImport(Accelerate)
-                // Chunked vDSP pipeline: Double→Float → clip (Float, in-place) → integer bytes.
-                // Clipping in Float (not Double) eliminates the 512 KB dblChunk intermediate,
-                // halving the L2 working-set and reducing per-component allocation overhead.
-                // Float has sufficient precision for all standard bit depths (≤24-bit).
-                var floatLo = Float(lo), floatHi = Float(hi)
-
-                compData.withUnsafeBufferPointer { src in
-                    let srcBase = src.baseAddress!
-                    if compInfo.bitDepth <= 8 && !compInfo.signed {
-                        // 8-bit unsigned: vDSP_vdpsp → vDSP_vclip → vDSP_vfixru8
-                        floatChunk.withUnsafeMutableBufferPointer { fBuf in
-                            for start in stride(from: 0, to: pixelCount, by: chunkSize) {
-                                let n = min(chunkSize, pixelCount - start)
-                                let cnt = vDSP_Length(n)
-                                vDSP_vdpsp(srcBase + start, 1, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vclip(fBuf.baseAddress!, 1, &floatLo, &floatHi, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vfixru8(fBuf.baseAddress!, 1, ptr + start, 1, cnt)
-                            }
-                        }
-                    } else if compInfo.bitDepth > 8 && !compInfo.signed {
-                        // 16-bit unsigned → big-endian bytes.
-                        // Fast path: vDSP fixes to UInt16 in host byte order, then bulk byte-swap on LE hosts.
-                        let u16Ptr = ptr.withMemoryRebound(to: UInt16.self, capacity: pixelCount) { $0 }
-                        floatChunk.withUnsafeMutableBufferPointer { fBuf in
-                            for start in stride(from: 0, to: pixelCount, by: chunkSize) {
-                                let n = min(chunkSize, pixelCount - start)
-                                let cnt = vDSP_Length(n)
-                                vDSP_vdpsp(srcBase + start, 1, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vclip(fBuf.baseAddress!, 1, &floatLo, &floatHi, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vfixru16(fBuf.baseAddress!, 1, u16Ptr + start, 1, cnt)
-                            }
-                        }
-                        if hostIsLittleEndian {
-                            for i in 0..<pixelCount { u16Ptr[i] = u16Ptr[i].byteSwapped }
-                        }
-                    } else if compInfo.bitDepth > 8 && compInfo.signed {
-                        // 16-bit signed (e.g. CT Hounsfield units) → big-endian bytes.
-                        let i16Ptr = ptr.withMemoryRebound(to: Int16.self, capacity: pixelCount) { $0 }
-                        floatChunk.withUnsafeMutableBufferPointer { fBuf in
-                            for start in stride(from: 0, to: pixelCount, by: chunkSize) {
-                                let n = min(chunkSize, pixelCount - start)
-                                let cnt = vDSP_Length(n)
-                                vDSP_vdpsp(srcBase + start, 1, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vclip(fBuf.baseAddress!, 1, &floatLo, &floatHi, fBuf.baseAddress!, 1, cnt)
-                                vDSP_vfixr16(fBuf.baseAddress!, 1, i16Ptr + start, 1, cnt)
-                            }
-                        }
-                        if hostIsLittleEndian {
-                            for i in 0..<pixelCount { i16Ptr[i] = i16Ptr[i].byteSwapped }
-                        }
-                    } else {
-                        // 8-bit signed: scalar fallback
-                        for i in 0..<pixelCount {
-                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
-                            ptr[i] = UInt8(bitPattern: Int8(clamping: rounded))
-                        }
-                    }
+                components[idx].withUnsafeBufferPointer { src in
+                    j2kWriteFinalSamples(
+                        from: src, into: rawBuf,
+                        layout: .flat(sampleCount: pixelCount),
+                        bitDepth: compInfo.bitDepth, signed: compInfo.signed,
+                        // 16-bit output is big-endian (PGM / DICOM Explicit VR
+                        // BE convention). Callers wanting little-endian either
+                        // byte-swap at integration or use the shared path,
+                        // which writes MEM-03's little-endian layout directly.
+                        byteOrder: .bigEndian,
+                        lowerBound: lower, upperBound: upper,
+                        scratch: &floatChunk)
                 }
-#else
-                if compInfo.bitDepth <= 8 {
-                    if compInfo.signed {
-                        for i in 0..<pixelCount {
-                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
-                            ptr[i] = UInt8(bitPattern: Int8(clamping: rounded))
-                        }
-                    } else {
-                        for i in 0..<pixelCount {
-                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
-                            ptr[i] = UInt8(clamping: max(0, rounded))
-                        }
-                    }
-                } else {
-                    // 16-bit output: big-endian byte order (PGM / DICOM Explicit VR BE
-                    // convention). Callers expecting little-endian output (e.g. DICOM
-                    // Explicit VR LE transfer syntax) must byte-swap at integration.
-                    if compInfo.signed {
-                        for i in 0..<pixelCount {
-                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
-                            let v = UInt16(bitPattern: Int16(clamping: rounded))
-                            ptr[i * 2]     = UInt8(v >> 8)
-                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
-                        }
-                    } else {
-                        for i in 0..<pixelCount {
-                            let rounded = min(componentUpperBound, max(componentLowerBound, clampRoundedToInt32(compData[i])))
-                            let v = UInt16(clamping: max(0, rounded))
-                            ptr[i * 2]     = UInt8(v >> 8)
-                            ptr[i * 2 + 1] = UInt8(v & 0xFF)
-                        }
-                    }
-                }
-#endif
             }
 
             // v5.14.1: tag the component byte order explicitly so
             // downstream consumers (CLI PGM/PPM writers, file-format
             // serialisers) can write spec-compliant bytes without
-            // re-swapping. The decoder's `reconstructImage` step
-            // produces 16-bit samples in big-endian byte order
-            // (the `if hostIsLittleEndian { byteSwapped }` branch a
-            // few lines up); 8-bit samples are byte-order-agnostic.
-            // Without this tag, callers that don't know the
+            // re-swapping. Without this tag, callers that don't know the
             // convention silently corrupt 16-bit output.
-            let component = J2KComponent(
-                index: idx,
-                bitDepth: compInfo.bitDepth,
-                signed: compInfo.signed,
-                width: width,
-                height: height,
-                subsamplingX: compInfo.subsamplingX,
-                subsamplingY: compInfo.subsamplingY,
+            imageComponents.append(J2KComponent(
+                index: idx, bitDepth: compInfo.bitDepth, signed: compInfo.signed,
+                width: width, height: height,
+                subsamplingX: compInfo.subsamplingX, subsamplingY: compInfo.subsamplingY,
                 data: data,
-                sampleByteOrder: compInfo.bitDepth > 8 ? .bigEndian : nil
-            )
-
-            imageComponents.append(component)
+                sampleByteOrder: compInfo.bitDepth > 8 ? .bigEndian : nil))
         }
 
         return J2KImage(
