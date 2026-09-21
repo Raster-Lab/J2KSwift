@@ -105,13 +105,27 @@ final class J2KMetalSessionTests: XCTestCase {
             "session-injected and sessionless decodeWithGPUHT must produce identical bytes")
     }
 
-    /// Warm-process measurement: decode N images through a single
-    /// shared session and report the per-decode median.
-    /// First decode is excluded — that's the one that pays the
-    /// init cost. Subsequent decodes should be substantially
-    /// faster than the equivalent sessionless calls (which pay the
-    /// init cost every time).
-    func testWarmProcessSpeedup() async throws {
+    /// An injected session must not be slower than the process-shared
+    /// default. Both paths run warm, so this is a regression guard, not a
+    /// speed-up measurement.
+    ///
+    /// Was `testWarmProcessSpeedup`, asserting `speedup > 1.0` on the premise
+    /// — stated in its own comments — that the no-session overload "pays init
+    /// cost every time". That premise held when the test was written; the
+    /// v5.8.0 notes record it passing at 1.50×. It stopped holding at v6.3.0
+    /// F2, which made `decodeWithGPUHT(_:)` set
+    /// `metalSession = J2KMetalSession.processShared`. Both arms now reuse a
+    /// warm session and differ only in *which* session object they use, so
+    /// the expected ratio is ~1.0× and a strict `> 1.0` gate is a coin flip:
+    /// measured at 0.94×, 0.95×, 0.96× and 1.17× across runs on an idle
+    /// machine, failing about two runs in three.
+    ///
+    /// What is still worth gating is that injecting a caller-supplied session
+    /// does not become materially slower than the default — the regression
+    /// that would matter is an injected session failing to cache its pipeline
+    /// state and recompiling shaders per decode, which costs far more than
+    /// the margin below.
+    func testInjectedSessionKeepsPaceWithProcessShared() async throws {
         try XCTSkipUnless(J2KMetalSession.isAvailable, "Metal not available")
 
         let image = makeImage(width: 512, height: 512, bitDepth: 12, seed: 0xCAFEBABE)
@@ -125,41 +139,48 @@ final class J2KMetalSessionTests: XCTestCase {
 
         let decoder = J2KDecoder()
         let session = J2KMetalSession()
-        let runs = 6
 
-        // Sessionless: every decode pays init cost — slow.
-        var sessionlessMs: [Double] = []
-        for _ in 0..<runs {
+        // Interleaved rather than run in two blocks, so thermal drift and
+        // background load fall on both arms equally instead of on whichever
+        // ran second. Eleven pairs, first discarded: on a shared CI machine
+        // one block of six measured mostly the other block's contention.
+        let pairs = 11
+        var processSharedMs: [Double] = []
+        var injectedMs: [Double] = []
+        for _ in 0..<pairs {
             let t0 = Date()
             _ = try await decoder.decodeWithGPUHT(encoded)
-            sessionlessMs.append(Date().timeIntervalSince(t0) * 1000)
-        }
+            processSharedMs.append(Date().timeIntervalSince(t0) * 1000)
 
-        // With session: first call pays init, subsequent reuse.
-        var sessionMs: [Double] = []
-        for _ in 0..<runs {
-            let t0 = Date()
+            let t1 = Date()
             _ = try await decoder.decodeWithGPUHT(encoded, session: session)
-            sessionMs.append(Date().timeIntervalSince(t0) * 1000)
+            injectedMs.append(Date().timeIntervalSince(t1) * 1000)
         }
 
-        let warmSession = Array(sessionMs.dropFirst())  // exclude first
-        let warmSessionless = Array(sessionlessMs.dropFirst())  // first pays JIT/page-cache too
-        let medSess = warmSession.sorted()[warmSession.count / 2]
-        let medNone = warmSessionless.sorted()[warmSessionless.count / 2]
-        let speedup = medNone / medSess
+        // Drop the first pair: it pays page-cache and, for the injected
+        // session, its one-time device and library setup.
+        func median(_ values: [Double]) -> Double {
+            let warm = Array(values.dropFirst()).sorted()
+            return warm[warm.count / 2]
+        }
+        let medProcessShared = median(processSharedMs)
+        let medInjected = median(injectedMs)
+        let ratio = medProcessShared / medInjected
 
         Self.say(String(format:
-            "[session] sessionless median=%.2fms session median=%.2fms speedup=%.2fx",
-            medNone, medSess, speedup))
+            "[session] process-shared median=%.2fms injected median=%.2fms ratio=%.2fx",
+            medProcessShared, medInjected, ratio))
 
-        // Soft assertion: session should be faster on average. The
-        // exact ratio is hardware-dependent; we just gate on > 1.0×
-        // to catch a regression where the session path is somehow
-        // slower than fresh-instance.
+        // Both paths are warm, so the honest expectation is parity. Gate on
+        // the injected session not being dramatically slower: 0.7 absorbs the
+        // few-percent run-to-run variance measured above with room to spare,
+        // while still catching a per-decode shader recompile, which would
+        // show up as a ratio far below it rather than just under 1.
         XCTAssertGreaterThan(
-            speedup, 1.0,
-            "session-shared decodes should be faster than sessionless on warm runs")
+            ratio, 0.7,
+            "an injected session should keep pace with the process-shared "
+            + "default; both reuse a warm session, so a large shortfall means "
+            + "the injected path is re-doing per-decode setup")
     }
 
     /// v5.13b gate (test-fixture-only for now; v5.13b implementation
