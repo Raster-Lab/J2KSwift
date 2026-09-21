@@ -780,6 +780,23 @@ struct MQDecoder: @unchecked Sendable {
     var debugC: UInt32 { c }
     var debugCT: Int { ct }
     var debugPosition: Int { position }
+
+    /// Number of times `readByte()` was called after the segment was exhausted.
+    ///
+    /// Reading past the end is *normal*: ISO/IEC 15444-1 Annex C defines the
+    /// decoder to feed `0xFF` indefinitely once its segment runs out, and a
+    /// clean block over-reads a couple of bytes on the flush tail. It is only
+    /// a large over-read that suggests the decoder has lost sync.
+    private(set) var overReadCount: Int = 0
+
+    /// Bytes of this segment the decoder actually consumed.
+    ///
+    /// `readByte()` does not advance past `dataCount`, so this saturates at
+    /// `segmentBytes` and never exceeds it.
+    var consumedBytes: Int { position }
+
+    /// Bytes the packet header declared for this segment.
+    var segmentBytes: Int { dataCount }
     
     /// Debug operation counter
     var operationCount: Int = 0
@@ -843,6 +860,7 @@ struct MQDecoder: @unchecked Sendable {
             position &+= 1
             return b
         }
+        overReadCount &+= 1
         return 0xFF
     }
 
@@ -1103,6 +1121,12 @@ struct RawBypassDecoder: @unchecked Sendable {
     private let dataCount: Int
     /// Current read position within the segment.
     private var position: Int = 0
+
+    /// Bytes of this segment the decoder actually consumed.
+    var consumedBytes: Int { position }
+
+    /// Bytes the packet header declared for this segment.
+    var segmentBytes: Int { dataCount }
 
     /// Creates a bypass decoder that borrows a slice of an existing byte array.
     /// No copy is made — `bytes` must outlive `self`.

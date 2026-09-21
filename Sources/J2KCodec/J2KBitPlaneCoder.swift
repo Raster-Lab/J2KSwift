@@ -1767,6 +1767,29 @@ struct BitPlaneDecoder: Sendable {
         irreversible: Bool = false,
         scratch: DecoderScratchBuffers? = nil
     ) throws -> [Int32] {
+        var discarded = J2KBlockIntegrity()
+        return try decode(
+            data: data, passCount: passCount, bitDepth: bitDepth,
+            zeroBitPlanes: zeroBitPlanes, passSegmentLengths: passSegmentLengths,
+            irreversible: irreversible, scratch: scratch, integrity: &discarded)
+    }
+
+    /// Decodes a code-block and reports how much of each declared segment the
+    /// entropy decoders actually consumed.
+    ///
+    /// The shortfall is the integrity signal: a synchronised decoder consumes
+    /// its segment, a desynchronised one stops early. See
+    /// ``J2KCodestreamIntegrity`` for why this is the quantity worth measuring.
+    func decode(
+        data: Data,
+        passCount: Int,
+        bitDepth: Int,
+        zeroBitPlanes: Int,
+        passSegmentLengths: [Int] = [],
+        irreversible: Bool = false,
+        scratch: DecoderScratchBuffers? = nil,
+        integrity integrityOut: inout J2KBlockIntegrity
+    ) throws -> [Int32] {
         let count = width * height
 
         // A code-block with no coding passes is the JPEG 2000 representation
@@ -1851,6 +1874,11 @@ struct BitPlaneDecoder: Sendable {
         let activeBitPlanes = bitDepth - zeroBitPlanes
         var passesDecoded = 0
 
+        // Byte accounting for this block, summed over its pass segments. Each
+        // decoder instance is absorbed exactly once: immediately before it is
+        // replaced, and once more after the bit-plane loop for the last one.
+        var integrity = J2KBlockIntegrity()
+
 
 
         // Process each bit-plane from MSB to LSB.
@@ -1885,6 +1913,7 @@ struct BitPlaneDecoder: Sendable {
                         break
                     }
                     let sl = passSlices[passSegmentIndex]
+                    integrity.absorb(decoder)
                     decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                     contextStates.reset()
                     passSegmentIndex += 1
@@ -1944,6 +1973,7 @@ struct BitPlaneDecoder: Sendable {
                         halfBitMask: halfBitMask,
                         bypassDecoder: &bypassDecoder
                     )
+                    integrity.absorb(bypassDecoder)
                 } else {
                     // Load segment for this pass if using per-pass segments
                     if usePerPassSegments {
@@ -1952,6 +1982,7 @@ struct BitPlaneDecoder: Sendable {
                             break
                         }
                         let sl = passSlices[passSegmentIndex]
+                        integrity.absorb(decoder)
                         decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                         contextStates.reset()
                         passSegmentIndex += 1
@@ -1986,6 +2017,7 @@ struct BitPlaneDecoder: Sendable {
                         break
                     }
                     let sl = passSlices[passSegmentIndex]
+                    integrity.absorb(decoder)
                     decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
                     contextStates.reset()
                     passSegmentIndex += 1
@@ -2053,6 +2085,13 @@ struct BitPlaneDecoder: Sendable {
                 }
             }
         }
+
+        // The decoder still in hand covers either the whole block (no per-pass
+        // segmentation) or the last pass segment; nothing has absorbed it yet.
+        integrity.absorb(decoder)
+        integrity.passesDeclared = passCount
+        integrity.passesDecoded = passesDecoded
+        integrityOut = integrity
 
         // Reconstruct signed coefficients with per-coefficient midpoint reconstruction.
         // Each significant coefficient has a half-bit set at the bit plane below the
@@ -2681,5 +2720,38 @@ struct CodeBlockDecoder: Sendable {
             irreversible: irreversible,
             scratch: scratch
         )
+    }
+
+    /// Decodes a code-block and reports its segment byte accounting.
+    ///
+    /// Identical to ``decode(codeBlock:bitDepth:options:irreversible:scratch:)``
+    /// except that it also returns how much of the declared segment the
+    /// entropy decoders consumed, which is what ``J2KCodestreamIntegrity``
+    /// thresholds on.
+    func decodeWithIntegrity(
+        codeBlock: J2KCodeBlock,
+        bitDepth: Int,
+        options: CodingOptions,
+        irreversible: Bool = false,
+        scratch: DecoderScratchBuffers? = nil
+    ) throws -> (coefficients: [Int32], integrity: J2KBlockIntegrity) {
+        let decoder = BitPlaneDecoder(
+            width: codeBlock.width,
+            height: codeBlock.height,
+            subband: codeBlock.subband,
+            options: options
+        )
+        var integrity = J2KBlockIntegrity()
+        let coefficients = try decoder.decode(
+            data: codeBlock.data,
+            passCount: codeBlock.passeCount,
+            bitDepth: bitDepth,
+            zeroBitPlanes: codeBlock.zeroBitPlanes,
+            passSegmentLengths: codeBlock.passSegmentLengths,
+            irreversible: irreversible,
+            scratch: scratch,
+            integrity: &integrity
+        )
+        return (coefficients, integrity)
     }
 }
