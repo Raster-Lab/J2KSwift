@@ -2069,11 +2069,34 @@ struct BitPlaneDecoder: Sendable {
         // block's slices partway through the first bit-plane.
         var segmentOfPass: [Int] = []
         if usePerPassSegments {
-            for (segmentIndex, passes) in DecoderPipeline.segmentPassCounts(
+            // Must match the encoder's predicate exactly. `.predictable`
+            // means terminate-each-pass for this coder and predates the
+            // style bits being modelled separately, so reading only the new
+            // flag here made the decoder expect one segment where the
+            // encoder had written one per pass.
+            let terminateEachPass = options.terminateOnEachPass
+                || options.terminationMode == .predictable
+            var counts = DecoderPipeline.segmentPassCounts(
                 numPasses: passCount,
-                terminateOnEachPass: options.terminateOnEachPass,
-                bypass: options.bypassEnabled
-            ).enumerated() {
+                terminateOnEachPass: terminateEachPass,
+                bypass: options.bypassEnabled)
+
+            if counts.count != passSlices.count {
+                // The caller handed over an explicit segment list whose shape
+                // does not follow from the coding style. That happens on the
+                // direct code-block API, where a per-pass-terminating
+                // producer passes one segment per pass. The supplied list
+                // wins: the computed shape exists to tell a packet-header
+                // parser how many lengths to read, and there is no header
+                // here. In a real codestream the two always agree, because
+                // the same rule produced both.
+                counts = [Int](repeating: 1, count: min(passCount, passSlices.count))
+                if !counts.isEmpty && counts.count < passCount {
+                    counts[counts.count - 1] += passCount - counts.count
+                }
+            }
+
+            for (segmentIndex, passes) in counts.enumerated() {
                 segmentOfPass.append(contentsOf: repeatElement(segmentIndex, count: passes))
             }
         }
