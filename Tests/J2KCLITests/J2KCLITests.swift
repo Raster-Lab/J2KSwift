@@ -8,43 +8,78 @@ import XCTest
 import Foundation
 @testable import J2KCore
 
+/// Raised when the `j2k` executable cannot be found, naming every path tried so the
+/// failure reports what to fix rather than only that some file is missing.
+enum CLILocationError: LocalizedError, CustomStringConvertible {
+    case executableNotFound(attempted: [String])
+
+    var description: String {
+        switch self {
+        case .executableNotFound(let attempted):
+            let tried = attempted.map { "  - \($0)" }.joined(separator: "\n")
+            return """
+                Could not find the `j2k` executable. Build it with \
+                `swift build --product j2k`, or set J2K_CLI_PATH to its location.
+                Tried:
+                \(tried)
+                """
+        }
+    }
+
+    var errorDescription: String? { description }
+}
+
 /// Basic integration tests for J2KCLI tool
 final class J2KCLITests: XCTestCase {
-    /// Path to the built CLI executable
+    /// Path to the built CLI executable.
+    ///
+    /// The products directory is derived from this bundle's own location, so the lookup
+    /// follows `--scratch-path`. The hardcoded `.build/...` paths below do not: a build
+    /// into any other scratch path leaves `j2k` somewhere they never look, and every
+    /// executable-based test here then fails on a missing file rather than on behaviour.
     var cliPath: String {
-        // Try to get the path from environment variable first (most robust)
-        if let envPath = ProcessInfo.processInfo.environment["J2K_CLI_PATH"] {
-            return envPath
+        get throws {
+            // An explicit override wins and is taken as given: a caller who sets it has
+            // said where the binary is.
+            if let envPath = ProcessInfo.processInfo.environment["J2K_CLI_PATH"] {
+                return envPath
+            }
+
+            let fileManager = FileManager.default
+            var attempted: [String] = []
+
+            // The directory this test bundle was built into, which is also where SwiftPM
+            // puts `j2k`, whatever scratch path the build used.
+            let productsDir = Bundle(for: Self.self).bundleURL.deletingLastPathComponent()
+
+            // Conventional locations, for a default-scratch-path build driven from the
+            // package root or from a parent directory, as some CI layouts do.
+            let currentDir = fileManager.currentDirectoryPath
+
+            let possiblePaths = [
+                productsDir.appendingPathComponent("j2k").path,
+                "\(currentDir)/.build/debug/j2k",
+                "\(currentDir)/.build/release/j2k",
+                "\(currentDir)/J2KSwift/.build/debug/j2k",
+                "\(currentDir)/J2KSwift/.build/release/j2k",
+            ]
+
+            for path in possiblePaths {
+                attempted.append(path)
+                if fileManager.fileExists(atPath: path) {
+                    return path
+                }
+            }
+
+            throw CLILocationError.executableNotFound(attempted: attempted)
         }
-
-        // Try to find the executable using FileManager by searching from current directory
-        let fileManager = FileManager.default
-        let currentDir = fileManager.currentDirectoryPath
-
-        // Common build locations to check
-        // Note: Some CI environments change directory structure, so we check both
-        // the current directory and a potential subdirectory with the package name
-        let possiblePaths = [
-            "\(currentDir)/.build/debug/j2k",
-            "\(currentDir)/.build/release/j2k",
-            "\(currentDir)/J2KSwift/.build/debug/j2k",
-            "\(currentDir)/J2KSwift/.build/release/j2k",
-        ]
-
-        // Return the first path that exists
-        for path in possiblePaths where fileManager.fileExists(atPath: path) {
-            return path
-        }
-
-        // Fall back to standard debug path (will fail if not found, but gives clear error)
-        return "\(currentDir)/.build/debug/j2k"
     }
 
     // MARK: - Executable-based tests
 
     func testCLIHelp() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["--help"]
 
         let pipe = Pipe()
@@ -63,7 +98,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIVersion() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["version"]
 
         let pipe = Pipe()
@@ -81,7 +116,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIVersionFlag() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["--version"]
 
         let pipe = Pipe()
@@ -99,7 +134,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIInfoHelp() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["info", "--help"]
 
         let pipe = Pipe()
@@ -117,7 +152,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLITranscodeHelp() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["transcode", "--help"]
 
         let pipe = Pipe()
@@ -135,7 +170,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIValidateHelp() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["validate", "--help"]
 
         let pipe = Pipe()
@@ -153,7 +188,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIBenchmarkHelp() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["benchmark", "--help"]
 
         let pipe = Pipe()
@@ -171,7 +206,7 @@ final class J2KCLITests: XCTestCase {
 
     func testCLIHelpShowsNewCommands() throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.executableURL = URL(fileURLWithPath: try cliPath)
         process.arguments = ["help"]
 
         let pipe = Pipe()
