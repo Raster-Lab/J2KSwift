@@ -11,6 +11,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [12.0.0-rc.1] — 2026-09-21 (release candidate)
+
+Three defects that all shared one failure mode: the decoder returned a
+plausible-looking wrong image instead of an error.
+
+### Breaking
+
+- **`J2KDecoder` rejects corrupted entropy data by default.** `validation`
+  defaults to `.strict`, which throws `J2KError.corruptedCodestream`. Pass
+  `.lenient` for the previous behaviour; the integrity report is returned
+  either way by `decodeWithIntegrity(_:)`.
+- **`J2KError` gained `corruptedCodestream(_:)`**, so exhaustive switches over
+  it no longer compile.
+- **Codestreams that previously decoded to wrong samples now decode
+  correctly.** Any consumer that captured J2KSwift's old output as a
+  reference will see it change for bypass, restart, segmark and
+  partially-tiled inputs.
+
+### Fixed
+
+- **Conformant third-party codestreams decoded to garbage, silently.** The
+  decoder read only bits 0 and 6 of the code-block style byte, discarding
+  RESET, RESTART, vertically-causal, PREDICTABLE and SEGMARK; the packet
+  header parser read one data length per code-block where B.10.7.2 signals
+  one per codeword segment; half of selective bypass was unimplemented; and a
+  degenerate sub-band dropped a whole resolution level on narrow tiles.
+  Measured across four independent encoders, streams decoding sample-exactly
+  went from **116/194 to 211/211**.
+- **Corrupted codestreams decoded without error.** The MQ decoder cannot fail
+  by construction, so nothing past `SOD` was validated. Entropy-segment byte
+  accounting now detects **93.6%** of swept corruptions at **zero false
+  positives** across 148 valid streams.
+- **A malformed `SIZ` marker aborted the host process** with an uncatchable
+  arithmetic-overflow trap.
+- **The `EOC` marker is now required**, so a transfer cut at that boundary is
+  no longer indistinguishable from a complete file.
+- **The bypass encoder was unreachable and non-conformant.** `kdu_expand` now
+  reproduces the source bit-exactly from a J2KSwift bypass codestream; before,
+  the same file came back entirely wrong.
+
+### Added
+
+- `J2KValidationMode`, `J2KCodestreamIntegrity`, `J2KIntegrityAnomaly`,
+  `J2KIntegrityThresholds` and `J2KDecoder.decodeWithIntegrity(_:)`.
+- `J2KEncodingConfiguration.selectiveArithmeticBypass`.
+- `Documentation/INTEGRITY_CALIBRATION.md`, `Documentation/CODING_MODES.md`
+  and `Scripts/generate-integrity-corpus.sh`.
+
+### Known limitations
+
+- Vertically causal context and predictable termination are parsed but not
+  implemented or verified; no encoder in the corpus emits either.
+- The encoder still writes `Scod = 0`, so it emits no SOP/EPH markers and no
+  code-block error-detection tools.
+- `Lblock` persistence across quality layers is unaudited in the multi-layer
+  packet path.
+
 ## [11.1.0-rc.1] — 2026-09-21 (release candidate)
 
 ### Added
