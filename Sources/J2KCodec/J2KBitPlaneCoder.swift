@@ -178,13 +178,35 @@ struct CodingOptions: Sendable {
     /// and Double accumulation from every processed coefficient in all three passes.
     let trackDistortion: Bool
 
+    /// Reset the arithmetic coder's context states at every coding pass
+    /// (code-block style bit 1).
+    ///
+    /// Distinct from `terminationMode`: resetting contexts and terminating
+    /// the codeword segment are separate bits in Table A.19, and a stream may
+    /// set either without the other.
+    let resetContextOnEachPass: Bool
+
+    /// Form contexts without reference to the stripe below (bit 3).
+    let verticallyCausalContext: Bool
+
+    /// Expect a four-symbol `0xA` sentinel after each cleanup pass (bit 5).
+    let segmentationSymbols: Bool
+
+    /// Terminate the codeword segment at every coding pass (bit 2, RESTART).
+    ///
+    /// Kept separate from `terminationMode`: Table A.19 gives RESET (bit 1),
+    /// RESTART (bit 2) and PREDICTABLE (bit 4) three independent bits, while
+    /// `TerminationMode.predictable` historically stood for a mixture of
+    /// them. Mapping a bit onto that case would silently enable the others.
+    let terminateOnEachPass: Bool
+
     /// Whether to reset the encoder after each coding pass (predictable termination).
     ///
     /// When enabled, the encoder state is reset after each coding pass,
     /// allowing independent decoding of each pass. This is automatically
     /// enabled when `terminationMode` is `.predictable`.
     var resetOnEachPass: Bool {
-        terminationMode == .predictable
+        terminationMode == .predictable || resetContextOnEachPass
     }
 
     /// Creates new coding options.
@@ -200,8 +222,16 @@ struct CodingOptions: Sendable {
         bypassThreshold: Int = 0,
         terminationMode: TerminationMode = .default,
         useISOPositionEncoding: Bool = true,
-        trackDistortion: Bool = true
+        trackDistortion: Bool = true,
+        resetContextOnEachPass: Bool = false,
+        verticallyCausalContext: Bool = false,
+        segmentationSymbols: Bool = false,
+        terminateOnEachPass: Bool = false
     ) {
+        self.terminateOnEachPass = terminateOnEachPass
+        self.resetContextOnEachPass = resetContextOnEachPass
+        self.verticallyCausalContext = verticallyCausalContext
+        self.segmentationSymbols = segmentationSymbols
         self.bypassEnabled = bypassEnabled
         self.bypassThreshold = max(0, bypassThreshold)
         self.terminationMode = terminationMode
@@ -1865,7 +1895,6 @@ struct BitPlaneDecoder: Sendable {
         // Initialise MQ decoder and contexts
         var decoder = MQDecoder(unsafePtr: dataPtr, offset: 0, count: 0)  // Will be replaced before first use
         var contextStates = ContextStateArray()
-        var passSegmentIndex = 0
 
         if !usePerPassSegments {
             decoder = MQDecoder(unsafePtr: dataPtr, offset: 0, count: dataCount)
@@ -1878,6 +1907,27 @@ struct BitPlaneDecoder: Sendable {
         // decoder instance is absorbed exactly once: immediately before it is
         // replaced, and once more after the bit-plane loop for the last one.
         var integrity = J2KBlockIntegrity()
+
+        // Which codeword segment each coding pass belongs to.
+        //
+        // This loop used to advance one segment per pass, which is right only
+        // when every pass is separately terminated. Under selective bypass a
+        // segment spans several passes — ten for the first, then alternating
+        // two and one — so advancing per pass walked off the end of the
+        // block's slices partway through the first bit-plane.
+        var segmentOfPass: [Int] = []
+        if usePerPassSegments {
+            for (segmentIndex, passes) in DecoderPipeline.segmentPassCounts(
+                numPasses: passCount,
+                terminateOnEachPass: options.terminateOnEachPass,
+                bypass: options.bypassEnabled
+            ).enumerated() {
+                segmentOfPass.append(contentsOf: repeatElement(segmentIndex, count: passes))
+            }
+        }
+        var currentSegment = -1
+        var rawDecoder = RawBypassDecoder(unsafePtr: dataPtr, offset: 0, count: 0)
+        var rawSegmentActive = false
 
 
 
@@ -1897,9 +1947,6 @@ struct BitPlaneDecoder: Sendable {
                 halfBitMask = bitPlane > 0 ? (1 << (bitPlane - 1)) : 0
             }
 
-            // Determine if bypass mode should be used for this bit-plane
-            let useBypass = options.bypassEnabled && bitPlane < options.bypassThreshold
-
             // Per ISO 15444-1 Annex D, the MSB (first) bit plane starts with
             // Cleanup only — SigProp and MagRef are skipped.
             let isFirstBitPlane = (bitPlane == activeBitPlanes - 1)
@@ -1907,30 +1954,60 @@ struct BitPlaneDecoder: Sendable {
             // Pass 1: Significance Propagation Pass (skip for MSB bit plane)
             if !isFirstBitPlane && passesDecoded < passCount {
                 // Load segment for this pass if using per-pass segments
+                // Open the codeword segment this pass belongs to. Under bypass
+                // the significance-propagation and magnitude-refinement passes are
+                // coded raw once the first ten passes are behind us; the cleanup
+                // pass stays arithmetically coded throughout.
+                var passIsRaw = false
                 if usePerPassSegments {
-                    guard passSegmentIndex < passSlices.count else {
-                        // Not enough pass segments - cannot decode further
-                        break
+                    guard passesDecoded < segmentOfPass.count else { break }
+                    let segment = segmentOfPass[passesDecoded]
+                    guard segment < passSlices.count else { break }
+                    passIsRaw = options.bypassEnabled && passesDecoded >= 10 && !false
+                    if segment != currentSegment {
+                        if rawSegmentActive { integrity.absorb(rawDecoder) }
+                        else { integrity.absorb(decoder) }
+                        let slice = passSlices[segment]
+                        if passIsRaw {
+                            rawDecoder = RawBypassDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        } else {
+                            decoder = MQDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        }
+                        rawSegmentActive = passIsRaw
+                        // Contexts survive a segment boundary unless the RESET bit says
+                        // otherwise. Terminating the codeword and resetting the
+                        // probabilities are separate bits in Table A.19, and resetting
+                        // unconditionally corrupted every RESTART-only stream.
+                        if options.resetOnEachPass { contextStates.reset() }
+                        currentSegment = segment
                     }
-                    let sl = passSlices[passSegmentIndex]
-                    integrity.absorb(decoder)
-                    decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
-                    contextStates.reset()
-                    passSegmentIndex += 1
                 }
 
                 #if EBCOT_DEBUG_TRACE
                 EBCOTDebugTrace.shared.logDecode("=== SIGPROP bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1)
                 #endif
-                decodeSignificancePropagationPass(
-                    magnitudes: &magnitudes,
-                    states: &states,
-                    halfBits: &halfBits,
-                    bitMask: bitMask,
-                    halfBitMask: halfBitMask,
-                    decoder: &decoder,
-                    contexts: &contextStates
-                )
+                if passIsRaw {
+                    decodeSignificancePropagationPassBypass(
+                        magnitudes: &magnitudes,
+                        states: &states,
+                        halfBits: &halfBits,
+                        bitMask: bitMask,
+                        halfBitMask: halfBitMask,
+                        bypassDecoder: &rawDecoder
+                    )
+                } else {
+                    decodeSignificancePropagationPass(
+                        magnitudes: &magnitudes,
+                        states: &states,
+                        halfBits: &halfBits,
+                        bitMask: bitMask,
+                        halfBitMask: halfBitMask,
+                        decoder: &decoder,
+                        contexts: &contextStates
+                    )
+                }
                 #if EBCOT_DEBUG_TRACE
                 if EBCOTDebugTrace.shared.enabled {
                     let sigCount = states.filter { $0.contains(.significant) }.count
@@ -1956,38 +2033,45 @@ struct BitPlaneDecoder: Sendable {
                 #if EBCOT_DEBUG_TRACE
                 EBCOTDebugTrace.shared.logDecode("=== MAGREF bitPlane=\(bitPlane) pass=\(passesDecoded) ===", x: -1, y: -1)
                 #endif
-                if useBypass {
-                    guard usePerPassSegments, passSegmentIndex < passSlices.count else {
-                        // Not enough pass segments for bypass mode - cannot decode further
-                        break
+                // Open the codeword segment this pass belongs to. Under bypass
+                // the pass is coded raw once the first ten passes are behind us.
+                var passIsRaw = false
+                if usePerPassSegments {
+                    guard passesDecoded < segmentOfPass.count else { break }
+                    let segment = segmentOfPass[passesDecoded]
+                    guard segment < passSlices.count else { break }
+                    passIsRaw = options.bypassEnabled && passesDecoded >= 10
+                    if segment != currentSegment {
+                        if rawSegmentActive { integrity.absorb(rawDecoder) }
+                        else { integrity.absorb(decoder) }
+                        let slice = passSlices[segment]
+                        if passIsRaw {
+                            rawDecoder = RawBypassDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        } else {
+                            decoder = MQDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        }
+                        rawSegmentActive = passIsRaw
+                        // Contexts survive a segment boundary unless the RESET bit says
+                        // otherwise. Terminating the codeword and resetting the
+                        // probabilities are separate bits in Table A.19, and resetting
+                        // unconditionally corrupted every RESTART-only stream.
+                        if options.resetOnEachPass { contextStates.reset() }
+                        currentSegment = segment
                     }
-                    // Use separate raw bypass decoder for bypass mode
-                    let bsl = passSlices[passSegmentIndex]
-                    var bypassDecoder = RawBypassDecoder(unsafePtr: dataPtr, offset: bsl.offset, count: bsl.count)
-                    passSegmentIndex += 1
+                }
+
+                if passIsRaw {
                     decodeMagnitudeRefinementPassBypass(
                         magnitudes: &magnitudes,
                         states: &states,
                         halfBits: &halfBits,
                         bitMask: bitMask,
                         halfBitMask: halfBitMask,
-                        bypassDecoder: &bypassDecoder
+                        bypassDecoder: &rawDecoder
                     )
-                    integrity.absorb(bypassDecoder)
                 } else {
-                    // Load segment for this pass if using per-pass segments
-                    if usePerPassSegments {
-                        guard passSegmentIndex < passSlices.count else {
-                            // Not enough pass segments - cannot decode further
-                            break
-                        }
-                        let sl = passSlices[passSegmentIndex]
-                        integrity.absorb(decoder)
-                        decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
-                        contextStates.reset()
-                        passSegmentIndex += 1
-                    }
-
                     decodeMagnitudeRefinementPass(
                         magnitudes: &magnitudes,
                         states: &states,
@@ -2010,17 +2094,33 @@ struct BitPlaneDecoder: Sendable {
 
             // Pass 3: Cleanup Pass
             if passesDecoded < passCount {
-                // Load segment for this pass if using per-pass segments
+                // Open the codeword segment this pass belongs to. Under bypass
+                // the cleanup pass stays arithmetically coded.
+                var passIsRaw = false
                 if usePerPassSegments {
-                    guard passSegmentIndex < passSlices.count else {
-                        // Not enough pass segments - cannot decode further
-                        break
+                    guard passesDecoded < segmentOfPass.count else { break }
+                    let segment = segmentOfPass[passesDecoded]
+                    guard segment < passSlices.count else { break }
+                    passIsRaw = false
+                    if segment != currentSegment {
+                        if rawSegmentActive { integrity.absorb(rawDecoder) }
+                        else { integrity.absorb(decoder) }
+                        let slice = passSlices[segment]
+                        if passIsRaw {
+                            rawDecoder = RawBypassDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        } else {
+                            decoder = MQDecoder(
+                                unsafePtr: dataPtr, offset: slice.offset, count: slice.count)
+                        }
+                        rawSegmentActive = passIsRaw
+                        // Contexts survive a segment boundary unless the RESET bit says
+                        // otherwise. Terminating the codeword and resetting the
+                        // probabilities are separate bits in Table A.19, and resetting
+                        // unconditionally corrupted every RESTART-only stream.
+                        if options.resetOnEachPass { contextStates.reset() }
+                        currentSegment = segment
                     }
-                    let sl = passSlices[passSegmentIndex]
-                    integrity.absorb(decoder)
-                    decoder = MQDecoder(unsafePtr: dataPtr, offset: sl.offset, count: sl.count)
-                    contextStates.reset()
-                    passSegmentIndex += 1
                 }
 
                 #if EBCOT_DEBUG_TRACE
@@ -2035,6 +2135,32 @@ struct BitPlaneDecoder: Sendable {
                     decoder: &decoder,
                     contexts: &contextStates
                 )
+
+                // Segmentation symbols (code-block style bit 5): the encoder
+                // codes the four-bit pattern 0b1010 with the uniform context
+                // at the end of every cleanup pass. These symbols are part of
+                // the codeword whether or not anyone checks them, so a
+                // decoder that does not consume them desynchronises every
+                // subsequent pass — which is why ignoring the bit produced
+                // garbage rather than a slightly worse image.
+                if options.segmentationSymbols {
+                    var symbol = 0
+                    contextStates.withUnsafeMutableContextArray { ctxPtr in
+                        for _ in 0..<4 {
+                            symbol = (symbol << 1)
+                                | (decoder.decode(context: &ctxPtr[18]) ? 1 : 0)
+                        }
+                    }
+                    if symbol != 0b1010 {
+                        throw J2KError.decodingError(
+                            "Segmentation symbol mismatch after cleanup pass "
+                            + "\(passesDecoded): expected 0xA, read "
+                            + "0x\(String(symbol, radix: 16)). The codeword "
+                            + "segment is corrupt or the coding style was "
+                            + "mis-signalled.")
+                    }
+                }
+
                 // Count significant coefficients after cleanup
                 #if EBCOT_DEBUG_TRACE
                 if EBCOTDebugTrace.shared.enabled {
@@ -2086,9 +2212,10 @@ struct BitPlaneDecoder: Sendable {
             }
         }
 
-        // The decoder still in hand covers either the whole block (no per-pass
-        // segmentation) or the last pass segment; nothing has absorbed it yet.
-        integrity.absorb(decoder)
+        // Whichever decoder is still in hand covers either the whole block (no
+        // per-pass segmentation) or the last pass segment; nothing has
+        // absorbed it yet.
+        if rawSegmentActive { integrity.absorb(rawDecoder) } else { integrity.absorb(decoder) }
         integrity.passesDeclared = passCount
         integrity.passesDecoded = passesDecoded
         integrityOut = integrity
@@ -2209,6 +2336,73 @@ struct BitPlaneDecoder: Sendable {
                 }
             }
         }
+
+    /// Decodes a significance-propagation pass coded raw, under selective
+    /// arithmetic bypass (ISO/IEC 15444-1 Annex D.6).
+    ///
+    /// Lazy mode codes **both** the significance-propagation and the
+    /// magnitude-refinement passes raw once the fourth significant bit-plane
+    /// has been passed; only the cleanup pass stays arithmetically coded.
+    /// This library previously implemented the raw magnitude-refinement pass
+    /// and not this one, so a bypass codestream lost synchronisation at the
+    /// first raw significance pass.
+    ///
+    /// Coefficient selection is identical to the arithmetic variant. What
+    /// differs is that significance and sign are each a single raw bit —
+    /// there is no context, and no XOR against a predicted sign.
+    private func decodeSignificancePropagationPassBypass(
+        magnitudes: inout [UInt32],
+        states: inout [CoefficientState],
+        halfBits: inout [UInt32],
+        bitMask: UInt32,
+        halfBitMask: UInt32,
+        bypassDecoder: inout RawBypassDecoder
+    ) {
+        let stripeHeight = 4
+        let w = width
+        let h = height
+
+        magnitudes.withUnsafeMutableBufferPointer { magBuf in
+            states.withUnsafeMutableBufferPointer { stateBuf in
+                halfBits.withUnsafeMutableBufferPointer { halfBuf in
+                    let magPtr = magBuf.baseAddress!
+                    let statePtr = stateBuf.baseAddress!
+                    let halfPtr = halfBuf.baseAddress!
+
+                    for stripeY in stride(from: 0, to: h, by: stripeHeight) {
+                        let stripeEnd = min(stripeY + stripeHeight, h)
+
+                        for x in 0..<w {
+                            for y in stripeY..<stripeEnd {
+                                let idx = y &* w &+ x
+
+                                // Same eligibility as the arithmetic pass: a
+                                // coefficient not yet significant that has at
+                                // least one significant neighbour. The context
+                                // value itself is unused here.
+                                let ctxRaw = contextModeler.sppSigContextOrSkip(
+                                    x: x, y: y, width: w, height: h, states: statePtr)
+                                guard ctxRaw != 0xFF else { continue }
+
+                                if bypassDecoder.decode() {
+                                    // Raw sign: 1 means negative, with no
+                                    // predicted-sign XOR.
+                                    let signBit = bypassDecoder.decode()
+                                    magPtr[idx] = magPtr[idx] | bitMask
+                                    halfPtr[idx] = halfBitMask
+                                    var newRaw: UInt8 = 0x03  // significant | codedThisPass
+                                    if signBit { newRaw |= 0x04 }  // signBit
+                                    statePtr[idx] = CoefficientState(rawValue: newRaw)
+                                } else {
+                                    statePtr[idx] = CoefficientState(rawValue: 0x02)  // codedThisPass
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // MARK: - Magnitude Refinement Pass (Decode)
 
