@@ -2209,6 +2209,84 @@ struct DecoderPipeline: Sendable {
         return (meta, tiles)
     }
 
+    /// Validates the SIZ reference-grid fields per ISO/IEC 15444-1 Table A.9.
+    ///
+    /// Every field arrives as a raw `UInt32` straight off the wire, and the
+    /// decoder then does plain (trapping) `Int` arithmetic on it:
+    ///
+    /// - `metadata.width * metadata.height` — the GPU-routing pixel threshold
+    ///   and every per-component buffer sizing. Two large `Xsiz`/`Ysiz`
+    ///   values overflow `Int` and **trap**, aborting the process.
+    /// - `CodestreamMetadata.numTilesX` / `numTilesY` divide by `XTsiz` /
+    ///   `YTsiz`, so a zero tile size is a division-by-zero trap.
+    ///
+    /// A trap is not a recoverable decode failure: callers cannot catch it,
+    /// so a malformed file takes down the host process instead of failing the
+    /// decode. Validating at the parse boundary keeps every downstream
+    /// consumer of `CodestreamMetadata` operating on values the spec permits.
+    ///
+    /// - Throws: ``J2KError/invalidDimensions(_:)`` for reference-grid
+    ///   violations, ``J2KError/invalidTileConfiguration(_:)`` for tiling
+    ///   violations, ``J2KError/invalidComponentConfiguration(_:)`` for `Csiz`.
+    static func validateSIZ(
+        xsiz: Int, ysiz: Int,
+        xOsiz: Int, yOsiz: Int,
+        xtsiz: Int, ytsiz: Int,
+        xtOsiz: Int, ytOsiz: Int,
+        csiz: Int
+    ) throws {
+        // Table A.9: Xsiz, Ysiz ∈ [1, 2^32 − 1]. The upper bound is implicit —
+        // the fields are read as UInt32, so only the lower bound needs testing.
+        guard xsiz >= 1, ysiz >= 1 else {
+            throw J2KError.invalidDimensions(
+                "SIZ: Xsiz and Ysiz must be at least 1, got \(xsiz)×\(ysiz)")
+        }
+
+        // Table A.9: XOsiz ∈ [0, Xsiz − 1], YOsiz ∈ [0, Ysiz − 1]. The image
+        // region is (Xsiz − XOsiz) × (Ysiz − YOsiz) and must be non-empty.
+        guard xOsiz < xsiz, yOsiz < ysiz else {
+            throw J2KError.invalidDimensions(
+                "SIZ: image offset (\(xOsiz), \(yOsiz)) must lie inside the "
+                + "\(xsiz)×\(ysiz) reference grid")
+        }
+
+        // Table A.9: XTsiz, YTsiz ∈ [1, 2^32 − 1]. Zero would divide by zero
+        // in `numTilesX` / `numTilesY`.
+        guard xtsiz >= 1, ytsiz >= 1 else {
+            throw J2KError.invalidTileConfiguration(
+                "SIZ: XTsiz and YTsiz must be at least 1, got \(xtsiz)×\(ytsiz)")
+        }
+
+        // Table A.9: XTOsiz ∈ [0, XOsiz], YTOsiz ∈ [0, YOsiz], and the first
+        // tile must contain the image origin (XTOsiz + XTsiz > XOsiz).
+        guard xtOsiz <= xOsiz, ytOsiz <= yOsiz else {
+            throw J2KError.invalidTileConfiguration(
+                "SIZ: tile offset (\(xtOsiz), \(ytOsiz)) must not exceed the "
+                + "image offset (\(xOsiz), \(yOsiz))")
+        }
+        guard xtOsiz + xtsiz > xOsiz, ytOsiz + ytsiz > yOsiz else {
+            throw J2KError.invalidTileConfiguration(
+                "SIZ: first tile at (\(xtOsiz), \(ytOsiz)) sized \(xtsiz)×\(ytsiz) "
+                + "does not reach the image origin (\(xOsiz), \(yOsiz))")
+        }
+
+        // Table A.9: Csiz ∈ [1, 16384].
+        guard csiz >= 1, csiz <= 16384 else {
+            throw J2KError.invalidComponentConfiguration(
+                "SIZ: Csiz must be in 1...16384, got \(csiz)")
+        }
+
+        // Even within their individual ranges, Xsiz × Ysiz can exceed Int.
+        // This is the multiplication that traps at the GPU-routing threshold
+        // and at every `[T](repeating:count:)` sized from the pixel count.
+        let (_, overflow) = xsiz.multipliedReportingOverflow(by: ysiz)
+        guard !overflow else {
+            throw J2KError.invalidDimensions(
+                "SIZ: reference grid \(xsiz)×\(ysiz) overflows the addressable "
+                + "pixel count")
+        }
+    }
+
     /// Parses the SIZ marker segment.
     private func parseSIZMarker(_ reader: inout J2KBitReader) throws -> CodestreamMetadata {
         let length = Int(try reader.readUInt16())
@@ -2235,6 +2313,15 @@ struct DecoderPipeline: Sendable {
 
         // Number of components
         let componentCount = Int(try reader.readUInt16())
+
+        // Reject out-of-range SIZ fields before they reach the geometry
+        // arithmetic. See `validateSIZ` for why this cannot be deferred.
+        try Self.validateSIZ(
+            xsiz: width, ysiz: height,
+            xOsiz: xOsiz, yOsiz: yOsiz,
+            xtsiz: tileWidth, ytsiz: tileHeight,
+            xtOsiz: xtOsiz, ytOsiz: ytOsiz,
+            csiz: componentCount)
 
         // Parse component information
         var components: [CodestreamMetadata.ComponentInfo] = []
