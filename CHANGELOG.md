@@ -11,6 +11,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.1.0-rc.1] — 2026-09-21 (release candidate)
+
+### Added
+
+- **Shared-contract image layer.** A validated `ImageDescriptor`, leased read-only
+  and writable storage with an explicit one-shot lifecycle, `Image`,
+  `ImageDestination`, `ResourceLimits`, `CopyPolicy` and an operation report,
+  wired to the existing codec. Implements the suite's common memory and
+  ownership contract at revision 0.7.0.
+- Under `CopyPolicy.requireSharedStorage` samples stay in the caller's own
+  allocation in both directions, honouring the caller's row stride and plane
+  offset. Padding between the row payload and `rowBytes` is never read or
+  written, so it cannot reach the codestream and caller sentinels survive.
+
+### Changed
+
+- The encode and decode sample stages are now each a single function called by
+  both the ordinary path and the shared-storage path, so the two cannot drift.
+  Output is unchanged: the shipped encode and decode stay byte-identical across 17 fixtures.
+
+### Notes
+
+The existing public API is untouched and the deployment floor is unchanged;
+this release adds a surface beside it rather than replacing it. The shared
+surface covers the initial shared layout only — one plane, one component,
+unsigned 16-bit, little-endian, even `rowBytes >= width * 2`, no subsampling,
+lossless. Anything else is reported as an incompatibility rather than silently
+converted.
+
+**This is a release candidate, not a stable release.** The suite's release
+gates have not been executed: there is no continuous-integration verification
+(the organisation's Actions billing is locked, so every job reports zero steps
+run), no fuzz campaign, and no benchmark evidence from controlled hardware.
+Everything recorded below was measured on a single developer machine.
+
+The surface lives in a separate `J2KContract` module, because `Image`,
+`ByteOrder` and `DecoderConfiguration` are already taken in the codec modules.
+This is the codec whose encode and decode are `async`, so `ImageDestination`
+gains `writeAsync`, which hands the codec a storage owner and its lease rather
+than a pointer — a borrow cannot span a suspension.
+
+**Verified locally:** the shipped encode and decode are byte-identical across
+17 fixtures spanning 8/12/16-bit, signed and unsigned, one and three
+components, tiled, lossy and GPU routes, comparing codestreams and samples. 13
+new tests pass.
+
+**Two gaps, stated rather than omitted.** The sanitizers could not be run
+against the new tests in this environment: the swift.org toolchain cannot link
+this package's XCTest targets, and Xcode 26.2's sanitizer runtimes are refused
+by platform policy. And corrupted codestreams currently decode without raising
+an error, so the contract's during-write failure branch is unexercised here;
+that behaviour is under separate investigation and is the main reason this is
+a release candidate rather than a stable release.
+
+
 ## [11.0.2] — 2026-07-11
 
 ### Fixed
