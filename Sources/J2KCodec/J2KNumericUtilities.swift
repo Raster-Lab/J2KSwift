@@ -5,7 +5,7 @@
 
 import Foundation
 
-enum J2KSampleByteOrder {
+package enum J2KSampleByteOrder {
     case littleEndian
     case bigEndian
 }

@@ -39,6 +39,13 @@ let package = Package(
         .library(
             name: "J2KCodec",
             targets: ["J2KCodec"]),
+        // The shared-contract surface lives in its own module: `Image`,
+        // `ByteOrder` and `DecoderConfiguration` are already taken in the
+        // codec modules. POL-03: "identically named types from different
+        // modules are distinct Swift types."
+        .library(
+            name: "J2KContract",
+            targets: ["J2KContract"]),
         .library(
             name: "J2KFileFormat",
             targets: ["J2KFileFormat"]),
@@ -120,6 +127,9 @@ let package = Package(
                 .product(name: "CompressionFamily", package: "CompressionFamily"),
             ]),
         .target(
+            name: "J2KContract",
+            dependencies: ["J2KCore", "J2KCodec"]),
+        .target(
             name: "J2KFileFormat",
             dependencies: ["J2KCore", "J2KCodec"]),
         .target(
@@ -177,6 +187,9 @@ let package = Package(
         .testTarget(
             name: "J2KCoreTests",
             dependencies: ["J2KCore", "J2KFileFormat"]),
+        .testTarget(
+            name: "J2KContractTests",
+            dependencies: ["J2KContract", "J2KCore", "J2KCodec"]),
         .testTarget(
             name: "J2KCodecTests",
             dependencies: [

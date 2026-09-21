@@ -252,6 +252,16 @@ struct EncodedCodestreamWithIndex: Sendable {
 struct EncoderPipeline: Sendable {
     let config: J2KEncodingConfiguration
 
+    /// SPIKE — caller-owned source for the input samples.
+    ///
+    /// When set, `extractComponentData` reads each component's samples from
+    /// the caller's plane instead of from `J2KComponent.data`, which under
+    /// `requireSharedStorage` the caller must otherwise have copied into. It
+    /// is an owner rather than a pointer because `encode` is `async` and
+    /// MEM-08 forbids a borrow spanning an `await`; the pointer is taken only
+    /// inside the synchronous input stage.
+    var sharedSource: J2KSharedSource? = nil
+
     /// Uses the default EBCOT coding style for the benchmark path.
     ///
     /// Selective bypass remains available in the codec, but stays disabled here
@@ -2124,87 +2134,83 @@ struct EncoderPipeline: Sendable {
     private func extractComponentData(from image: J2KImage) throws -> [[Int32]] {
         var result: [[Int32]] = []
 
-        for component in image.components {
+        for (idx, component) in image.components.enumerated() {
             let pixelCount = component.width * component.height
             var pixels = [Int32](repeating: 0, count: pixelCount)
+            let bytesPerPixel = component.bitDepth <= 8 ? 1 : 2
+            guard component.bitDepth <= 16 else { result.append(pixels); continue }
 
-            let data = component.data
-            if component.bitDepth <= 8 {
-                // v6.3.0 F3 — sub-stage timing instrumentation.
-                let _t0 = CFAbsoluteTimeGetCurrent()
-                let byteCount = min(data.count, pixelCount)
-                data.withUnsafeBytes { buffer in
-                    guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                        return
+            let _t0 = CFAbsoluteTimeGetCurrent()
+
+            // SPIKE — caller-source encode (the input-stage twin of MEM-10's
+            // rule for decode output). This branch differs from the ordinary
+            // one below only in where the bytes come from and how rows are
+            // strided: the widening loop is the same call, so the two cannot
+            // drift, and padding beyond the row payload is never read.
+            if let shared = sharedSource {
+                let planeExtent = (component.height - 1) * shared.rowBytes
+                    + component.width * bytesPerPixel
+                let planeBase = idx * shared.planeStrideBytes
+                try shared.withBytes { bytes in
+                    // MEM-04: the last byte this plane touches, checked
+                    // against the retained allocation before a pointer is used.
+                    guard planeBase >= 0, planeExtent >= 0,
+                          planeBase + planeExtent <= bytes.count else {
+                        throw J2KError.invalidParameter(
+                            "Shared source holds \(bytes.count) bytes; component \(idx) needs "
+                            + "\(planeBase + planeExtent)")
                     }
-                    for i in 0..<byteCount {
-                        if component.signed {
-                            pixels[i] = Int32(Int8(bitPattern: ptr[i]))
-                        } else {
-                            pixels[i] = Int32(ptr[i])
-                        }
+                    let slice = UnsafeRawBufferPointer(
+                        rebasing: bytes[planeBase..<(planeBase + planeExtent)])
+                    pixels.withUnsafeMutableBufferPointer { dst in
+                        j2kReadComponentSamples(
+                            from: slice, into: dst,
+                            layout: .strided(width: component.width, height: component.height,
+                                             rowBytes: shared.rowBytes, bytesPerPixel: bytesPerPixel),
+                            bitDepth: component.bitDepth, signed: component.signed,
+                            byteOrder: shared.byteOrder)
                     }
                 }
-                J2KPreprocessSubstageTimings.recordExtractComponentData8(
-                    CFAbsoluteTimeGetCurrent() - _t0)
-            } else if component.bitDepth <= 16 {
-                // v6.3.0 F3 — sub-stage timing instrumentation.
-                let _t0 = CFAbsoluteTimeGetCurrent()
-                let sampleCount = min(data.count / 2, pixelCount)
+            } else {
+                let data = component.data
                 // Prefer the caller's explicit byte-order hint when available.
                 // Auto-inference via `j2kInfer16BitByteOrder` is reliable for
                 // ≤ 14-bit content but can tie at full 16-bit (both readings
                 // fit UInt16), producing hard-to-debug round-trip failures on
                 // large 16-bit images. Keep inference as a fallback so legacy
                 // callers without a hint still work.
+                let sampleCount = min(data.count / bytesPerPixel, pixelCount)
                 let byteOrder: J2KSampleByteOrder
-                switch component.sampleByteOrder {
-                case .littleEndian: byteOrder = .littleEndian
-                case .bigEndian:    byteOrder = .bigEndian
-                case nil:
-                    byteOrder = j2kInfer16BitByteOrder(
-                        in: data,
-                        sampleCount: sampleCount,
-                        bitDepth: component.bitDepth,
-                        signed: component.signed
-                    )
+                if component.bitDepth <= 8 {
+                    byteOrder = .littleEndian          // byte order is moot at 8 bits
+                } else {
+                    switch component.sampleByteOrder {
+                    case .littleEndian: byteOrder = .littleEndian
+                    case .bigEndian:    byteOrder = .bigEndian
+                    case nil:
+                        byteOrder = j2kInfer16BitByteOrder(
+                            in: data, sampleCount: sampleCount,
+                            bitDepth: component.bitDepth, signed: component.signed)
+                    }
                 }
-                // v5.38 M7: hoist the (byteOrder × signedness) branches
-                // out of the per-pixel hot loop. Both are constant for a
-                // single component; specialising the loop to one of 4
-                // closed-form bodies lets LLVM auto-vectorise the
-                // UInt16 widening into NEON Int32 stores. For 12 MP DX
-                // this loop runs 12M iterations per encode.
                 data.withUnsafeBytes { buffer in
-                    guard let srcPtr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
-                        return
-                    }
-                    pixels.withUnsafeMutableBufferPointer { dstBuf in
-                        let dst = dstBuf.baseAddress!
-                        switch (byteOrder, component.signed) {
-                        case (.bigEndian, false):
-                            for i in 0..<sampleCount {
-                                let v = (UInt16(srcPtr[i &* 2]) << 8) | UInt16(srcPtr[i &* 2 &+ 1])
-                                dst[i] = Int32(v)
-                            }
-                        case (.bigEndian, true):
-                            for i in 0..<sampleCount {
-                                let v = (UInt16(srcPtr[i &* 2]) << 8) | UInt16(srcPtr[i &* 2 &+ 1])
-                                dst[i] = Int32(Int16(bitPattern: v))
-                            }
-                        case (.littleEndian, false):
-                            for i in 0..<sampleCount {
-                                let v = UInt16(srcPtr[i &* 2]) | (UInt16(srcPtr[i &* 2 &+ 1]) << 8)
-                                dst[i] = Int32(v)
-                            }
-                        case (.littleEndian, true):
-                            for i in 0..<sampleCount {
-                                let v = UInt16(srcPtr[i &* 2]) | (UInt16(srcPtr[i &* 2 &+ 1]) << 8)
-                                dst[i] = Int32(Int16(bitPattern: v))
-                            }
-                        }
+                    pixels.withUnsafeMutableBufferPointer { dst in
+                        j2kReadComponentSamples(
+                            from: buffer, into: dst,
+                            // Short input stays tolerated exactly as before:
+                            // only `sampleCount` samples are read, the rest
+                            // keep their zero fill.
+                            layout: .flat(sampleCount: sampleCount),
+                            bitDepth: component.bitDepth, signed: component.signed,
+                            byteOrder: byteOrder)
                     }
                 }
+            }
+
+            if component.bitDepth <= 8 {
+                J2KPreprocessSubstageTimings.recordExtractComponentData8(
+                    CFAbsoluteTimeGetCurrent() - _t0)
+            } else {
                 J2KPreprocessSubstageTimings.recordExtractComponentData16(
                     CFAbsoluteTimeGetCurrent() - _t0)
             }
