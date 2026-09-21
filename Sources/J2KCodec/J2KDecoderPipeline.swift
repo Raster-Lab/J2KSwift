@@ -108,8 +108,60 @@ struct DecoderConfiguration: Sendable {
     /// `.custom` archives that pre-date marker-based signalling.
     var htBlockFormatExplicit: Bool = false
 
-    /// Whether selective arithmetic coding bypass is enabled (from COD marker bit 0).
+    // MARK: Code-block style (ISO/IEC 15444-1 Table A.19, SPcod/SPcoc byte 4)
+    //
+    // Only bits 0 and 6 used to be read. Bits 1-5 were dropped on the floor,
+    // so any codestream using them was decoded as though they were off — and
+    // because each of them changes how the entropy data is segmented or how
+    // context is formed, that desynchronises the decoder by construction
+    // rather than degrading gracefully.
+
+    /// Selective arithmetic coding bypass, "lazy" mode (bit 0, `0x01`).
+    ///
+    /// After the fourth significant bit-plane the significance-propagation
+    /// and magnitude-refinement passes are coded raw instead of through the
+    /// MQ coder, and each raw run is its own codeword segment.
     var useSelectiveArithmeticBypass: Bool = false
+
+    /// Reset context probabilities on each coding pass (bit 1, `0x02`).
+    var resetContextOnEachPass: Bool = false
+
+    /// Termination on each coding pass, "RESTART" (bit 2, `0x04`).
+    ///
+    /// Every pass is separately terminated, so the packet header signals a
+    /// length per pass rather than one per code-block.
+    var terminateOnEachPass: Bool = false
+
+    /// Vertically causal context formation (bit 3, `0x08`).
+    ///
+    /// Context formation ignores the stripe below the current one, so a
+    /// stripe can be decoded without waiting for its successor.
+    var verticallyCausalContext: Bool = false
+
+    /// Predictable termination (bit 4, `0x10`).
+    ///
+    /// An error-detection aid: the encoder terminates so the decoder can
+    /// check the spare bits. Signalled but not yet verified here.
+    var usePredictableTermination: Bool = false
+
+    /// Segmentation symbols (bit 5, `0x20`).
+    ///
+    /// A four-symbol `0xA` sentinel is coded at the end of each cleanup pass
+    /// with the uniform context. Not decoding it desynchronises every
+    /// subsequent pass.
+    var useSegmentationSymbols: Bool = false
+
+    /// Applies the SPcod/SPcoc code-block style byte.
+    mutating func applyCodeBlockStyle(_ byte: UInt8) {
+        let flags = DecoderPipeline.codeBlockStyleFlags(byte)
+        useSelectiveArithmeticBypass = flags.bypass
+        resetContextOnEachPass = flags.resetContext
+        terminateOnEachPass = flags.terminateAll
+        verticallyCausalContext = flags.verticallyCausal
+        usePredictableTermination = flags.predictableTermination
+        useSegmentationSymbols = flags.segmentationSymbols
+        useHTJ2K = flags.ht
+    }
 
     /// Per-component DC offset values from DCO marker segment (Part 2).
     ///
@@ -2310,6 +2362,37 @@ struct DecoderPipeline: Sendable {
         }
     }
 
+    /// Builds the entropy-decoder options a codestream's code-block style
+    /// calls for.
+    ///
+    /// Previously this was `bypass ? .fastEncoding : .default`, so every
+    /// style bit except bypass was discarded before the entropy decoder ever
+    /// saw it.
+    static func decodeCodingOptions(for config: DecoderConfiguration) -> CodingOptions {
+        CodingOptions(
+            bypassEnabled: config.useSelectiveArithmeticBypass,
+            bypassThreshold: 4,
+            resetContextOnEachPass: config.resetContextOnEachPass,
+            verticallyCausalContext: config.verticallyCausalContext,
+            segmentationSymbols: config.useSegmentationSymbols,
+            terminateOnEachPass: config.terminateOnEachPass)
+    }
+
+    /// Decodes the SPcod/SPcoc code-block style byte (Table A.19).
+    static func codeBlockStyleFlags(_ byte: UInt8) -> (
+        bypass: Bool, resetContext: Bool, terminateAll: Bool,
+        verticallyCausal: Bool, predictableTermination: Bool,
+        segmentationSymbols: Bool, ht: Bool
+    ) {
+        (bypass: byte & 0x01 != 0,
+         resetContext: byte & 0x02 != 0,
+         terminateAll: byte & 0x04 != 0,
+         verticallyCausal: byte & 0x08 != 0,
+         predictableTermination: byte & 0x10 != 0,
+         segmentationSymbols: byte & 0x20 != 0,
+         ht: byte & 0x40 != 0)
+    }
+
     /// Parses the SIZ marker segment.
     private func parseSIZMarker(_ reader: inout J2KBitReader) throws -> CodestreamMetadata {
         let length = Int(try reader.readUInt16())
@@ -2369,12 +2452,24 @@ struct DecoderPipeline: Sendable {
             try reader.skip(length - 2 - bytesRead)
         }
 
+        // ISO/IEC 15444-1 Eq. B-7 clips a tile to the reference grid, so a
+        // nominal tile larger than the image codes only the image's extent.
+        // The multi-tile path already clips per tile, but a single tile is
+        // decoded straight from this metadata — so a codestream declaring,
+        // say, XTsiz = 128 over a 64-wide image had its whole subband grid
+        // computed for a 128-wide tile and decoded to garbage, even though
+        // its entropy payload is byte-identical to the untiled encoding of
+        // the same image.
+        let gridWidth = max(1, width - xOsiz)
+        let gridHeight = max(1, height - yOsiz)
+
         return CodestreamMetadata(
             width: width,
             height: height,
             componentCount: componentCount,
             components: components,
-            tileSize: (width: tileWidth, height: tileHeight),
+            tileSize: (width: min(tileWidth, gridWidth),
+                       height: min(tileHeight, gridHeight)),
             imageOffset: (x: xOsiz, y: yOsiz),
             tileOffset: (x: xtOsiz, y: ytOsiz),
             configuration: DecoderConfiguration(),
@@ -2428,8 +2523,7 @@ struct DecoderPipeline: Sendable {
         // Bit 0: Selective arithmetic coding bypass
         // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
         let codeBlockStyle = try reader.readUInt8()
-        config.useSelectiveArithmeticBypass = (codeBlockStyle & 0x01) != 0
-        config.useHTJ2K = (codeBlockStyle & 0x40) != 0
+        config.applyCodeBlockStyle(codeBlockStyle)
 
         // Wavelet transform type
         let transformType = try reader.readUInt8()
@@ -2511,8 +2605,7 @@ struct DecoderPipeline: Sendable {
         // Bit 0: Selective arithmetic coding bypass
         // Bit 6: HT block coding (1 = HTJ2K, 0 = legacy EBCOT)
         let codeBlockStyle = try reader.readUInt8()
-        config.useSelectiveArithmeticBypass = (codeBlockStyle & 0x01) != 0
-        config.useHTJ2K = (codeBlockStyle & 0x40) != 0
+        config.applyCodeBlockStyle(codeBlockStyle)
 
         // Wavelet transform type
         let transformType = try reader.readUInt8()
@@ -2686,6 +2779,9 @@ struct DecoderPipeline: Sendable {
         let passCount: Int
         let zeroBitPlanes: Int
         let bandKb: Int
+        /// One entry per MQ codeword segment; empty means a single segment
+        /// spanning the whole block, which is the default coding style.
+        var segmentLengths: [Int] = []
     }
 
     /// Extracts code blocks from tile data using ISO/IEC 15444-1 packet format.
@@ -2776,6 +2872,10 @@ struct DecoderPipeline: Sendable {
             let zeroBitPlanes: Int
             let bandKb: Int
             let dataLength: Int
+            /// One entry per MQ codeword segment. A single entry is the
+            /// default style; bypass and termination-on-each-pass produce
+            /// several, and the entropy decoder must restart at each.
+            let segmentLengths: [Int]
         }
 
         // LRCP progression: layer × resolution × component × precinct.
@@ -2805,11 +2905,20 @@ struct DecoderPipeline: Sendable {
                 // For r > 0, all sub-bands HL/LH/HH share the same grid;
                 // use one of them as a reference. For r = 0, the LL band's
                 // dimensions define the grid.
-                let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
-                let (sbWRef, sbHRef) = Self.subbandDimensions(
+                // The precinct grid spans the whole resolution level, so it
+                // must be sized from every sub-band present — not from HL
+                // alone. HL carries an x half-offset and HH both, so for a
+                // tile the image edge cuts to a narrow strip either can come
+                // out exactly zero wide while LH does not. Taking HL as the
+                // reference then skipped the entire resolution level, and
+                // with it a packet that is really there, desynchronising
+                // every packet after it. That is the whole of the remaining
+                // partial-tile failure, and it is x-specific precisely
+                // because the offsets are.
+                let (sbWRef, sbHRef) = Self.resolutionGridSize(
                     tileWidth: tileWidth, tileHeight: tileHeight,
                     tileOriginX: tileOriginX, tileOriginY: tileOriginY,
-                    levels: levels, resLevel: resLevel, subband: referenceSubband)
+                    levels: levels, resLevel: resLevel)
                 guard sbWRef > 0 && sbHRef > 0 else { continue }
 
                 let (pw, ph) = bandPrecinctSize(forRes: resLevel)
@@ -2896,7 +3005,16 @@ struct DecoderPipeline: Sendable {
                                 }
 
                                 let passes = try Self.decodeCodingPasses(&reader)
-                                let length = try Self.decodeDataLength(&reader, numPasses: passes)
+                                // Lblock persists per code-block across
+                                // packets; in this single-layer path each
+                                // block is signalled once, so it starts at
+                                // the standard's initial 3 each time.
+                                var lblock = 3
+                                let segmentLengths = try Self.decodeDataLengths(
+                                    &reader, numPasses: passes, lblock: &lblock,
+                                    terminateOnEachPass: metadata.configuration.terminateOnEachPass,
+                                    bypass: metadata.configuration.useSelectiveArithmeticBypass)
+                                let length = segmentLengths.reduce(0, +)
 
                                 let localY = localLeafIdx / pBlocksX
                                 let localX = localLeafIdx % pBlocksX
@@ -2927,7 +3045,8 @@ struct DecoderPipeline: Sendable {
                                     passCount: passes,
                                     zeroBitPlanes: Int(zbp),
                                     bandKb: kb,
-                                    dataLength: length))
+                                    dataLength: length,
+                                    segmentLengths: segmentLengths))
                             }
                         }
 
@@ -2945,7 +3064,12 @@ struct DecoderPipeline: Sendable {
                                 data: blockData,
                                 passCount: pb.passCount,
                                 zeroBitPlanes: pb.zeroBitPlanes,
-                                bandKb: pb.bandKb))
+                                bandKb: pb.bandKb,
+                                // A lone segment is the default style; leave
+                                // it empty so the decoder takes its
+                                // single-MQ-decoder path unchanged.
+                                segmentLengths: pb.segmentLengths.count > 1
+                                    ? pb.segmentLengths : []))
                         }
                         reader.setByteStuffing(true)
                     }
@@ -3073,11 +3197,13 @@ struct DecoderPipeline: Sendable {
             for resLevel in 0...levels {
                 for compIdx in 0..<numComponents {
                     let subbands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
-                    let referenceSubband: J2KSubband = resLevel == 0 ? .ll : .hl
-                    let (sbWRef, sbHRef) = Self.subbandDimensions(
+                    // See `extractTileData`: the precinct grid spans the
+                    // resolution level, so a degenerate HL must not stand in
+                    // for it.
+                    let (sbWRef, sbHRef) = Self.resolutionGridSize(
                         tileWidth: tileWidth, tileHeight: tileHeight,
                         tileOriginX: tileOriginX, tileOriginY: tileOriginY,
-                        levels: levels, resLevel: resLevel, subband: referenceSubband)
+                        levels: levels, resLevel: resLevel)
                     guard sbWRef > 0 && sbHRef > 0 else { continue }
                     let (pw, ph) = bandPrecinctSize(forRes: resLevel)
                     let numPrecinctsX = max(1, (sbWRef + pw - 1) / pw)
@@ -3244,6 +3370,46 @@ struct DecoderPipeline: Sendable {
     /// for HL, (0, 2^(d-1)) for LH, (2^(d-1), 2^(d-1)) for HH; and
     /// d is the decomposition depth (= `levels` for LL, = `levels -
     /// resLevel + 1` for HL/LH/HH at resolution `resLevel`).
+    /// The extent of a resolution level's precinct grid, in band-local
+    /// coordinates.
+    ///
+    /// For `resLevel == 0` that is the LL band. Above it, the level is
+    /// carried by HL, LH and HH together, and the grid must cover all three:
+    /// the half-sample offsets in Eq. B-15 mean a narrow tile can make HL or
+    /// HH exactly zero wide while LH is not, and sizing the grid from HL
+    /// alone then drops a resolution level that is really present.
+    /// Test hook for ``subbandDimensions(tileWidth:tileHeight:tileOriginX:tileOriginY:levels:resLevel:subband:)``,
+    /// which is private because nothing outside this file should size a band.
+    static func subbandDimensionsForTesting(
+        tileWidth: Int, tileHeight: Int,
+        tileOriginX: Int, tileOriginY: Int,
+        levels: Int, resLevel: Int, subband: J2KSubband
+    ) -> (width: Int, height: Int) {
+        subbandDimensions(
+            tileWidth: tileWidth, tileHeight: tileHeight,
+            tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+            levels: levels, resLevel: resLevel, subband: subband)
+    }
+
+    static func resolutionGridSize(
+        tileWidth: Int, tileHeight: Int,
+        tileOriginX: Int, tileOriginY: Int,
+        levels: Int, resLevel: Int
+    ) -> (width: Int, height: Int) {
+        let bands: [J2KSubband] = resLevel == 0 ? [.ll] : [.hl, .lh, .hh]
+        var width = 0
+        var height = 0
+        for band in bands {
+            let (w, h) = subbandDimensions(
+                tileWidth: tileWidth, tileHeight: tileHeight,
+                tileOriginX: tileOriginX, tileOriginY: tileOriginY,
+                levels: levels, resLevel: resLevel, subband: band)
+            width = max(width, w)
+            height = max(height, h)
+        }
+        return (width, height)
+    }
+
     private static func subbandDimensions(
         tileWidth: Int, tileHeight: Int,
         tileOriginX: Int = 0, tileOriginY: Int = 0,
@@ -3326,12 +3492,91 @@ struct DecoderPipeline: Sendable {
 
     /// Decodes data length using the Lblock mechanism per ISO 15444-1 B.10.7.
     /// Total bits = Lblock + floor(log2(numpasses)).
-    private static func decodeDataLength(_ reader: inout J2KBitReader, numPasses: Int) throws -> Int {
-        var lblock = 3
+    /// How many coding passes may share one MQ codeword segment.
+    ///
+    /// ISO/IEC 15444-1 Annex D. A code-block is one segment by default, but
+    /// the code-block style can split it:
+    ///
+    /// - **Termination on each pass** (`0x04`) gives one segment per pass.
+    /// - **Selective bypass** (`0x01`) terminates around the raw passes: the
+    ///   first ten passes are arithmetically coded and share a segment, and
+    ///   from there each bit-plane contributes a two-pass raw segment and a
+    ///   one-pass cleanup segment, alternating.
+    ///
+    /// - Parameters:
+    ///   - index: zero-based segment index within the code-block.
+    ///   - previousMaxPasses: the previous segment's capacity, or `nil` for
+    ///     the first segment.
+    static func segmentCapacity(
+        index: Int,
+        previousMaxPasses: Int?,
+        terminateOnEachPass: Bool,
+        bypass: Bool
+    ) -> Int {
+        if terminateOnEachPass { return 1 }
+        guard bypass else {
+            // One segment for the whole block. 109 is the largest pass count
+            // the standard permits, so this is "no split" expressed as a
+            // capacity rather than as a special case.
+            return 109
+        }
+        guard let previous = previousMaxPasses else { return 10 }
+        // After the first ten passes: raw SigProp+MagRef (2), then the MQ
+        // cleanup pass (1), repeating.
+        return (previous == 1 || previous == 10) ? 2 : 1
+    }
+
+    /// Splits a code-block's passes into codeword segments.
+    static func segmentPassCounts(
+        numPasses: Int,
+        terminateOnEachPass: Bool,
+        bypass: Bool
+    ) -> [Int] {
+        guard numPasses > 0 else { return [] }
+        var counts: [Int] = []
+        var remaining = numPasses
+        var previous: Int? = nil
+        while remaining > 0 {
+            let capacity = segmentCapacity(
+                index: counts.count, previousMaxPasses: previous,
+                terminateOnEachPass: terminateOnEachPass, bypass: bypass)
+            let take = min(remaining, capacity)
+            counts.append(take)
+            remaining -= take
+            previous = capacity
+        }
+        return counts
+    }
+
+    /// Reads the code-block's signalled data lengths, one per codeword
+    /// segment (ISO/IEC 15444-1 B.10.7.2).
+    ///
+    /// Reading a single length here was correct only for the default style.
+    /// Under bypass or termination-on-each-pass the header carries one length
+    /// per segment, so a single read left the remaining lengths in the bit
+    /// stream and every subsequent code-block in the packet was then parsed
+    /// from the wrong position.
+    ///
+    /// - Parameter lblock: the code-block's `Lblock` state, which persists
+    ///   across packets and is updated in place by the signalled increment.
+    private static func decodeDataLengths(
+        _ reader: inout J2KBitReader,
+        numPasses: Int,
+        lblock: inout Int,
+        terminateOnEachPass: Bool,
+        bypass: Bool
+    ) throws -> [Int] {
         while try reader.readBit() { lblock += 1 }
-        let passLog = numPasses > 1 ? Int(log2(Double(numPasses))) : 0
-        let totalBits = lblock + passLog
-        return Int(try reader.readBits(totalBits))
+        let segments = segmentPassCounts(
+            numPasses: numPasses,
+            terminateOnEachPass: terminateOnEachPass, bypass: bypass)
+        var lengths: [Int] = []
+        lengths.reserveCapacity(segments.count)
+        for passes in segments {
+            let passLog = passes > 1 ? Int(log2(Double(passes))) : 0
+            lengths.append(Int(try reader.readBits(lblock + passLog)))
+        }
+        return lengths
     }
 
     // MARK: - Stage 3: Entropy Decoding
@@ -3687,7 +3932,7 @@ struct DecoderPipeline: Sendable {
             // Each code block is independent (own MQ state + context models for EBCOT,
             // own MEL/VLC/MagSgn state for HTJ2K).
             let componentBitDepths = metadata.components.map { $0.bitDepth }
-            let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
+            let decodeOptions = Self.decodeCodingOptions(for: metadata.configuration)
 
             // Parallel decode using structured concurrency.
             //
@@ -3797,7 +4042,8 @@ struct DecoderPipeline: Sendable {
                                     subband: block.subband,
                                     data: block.data,
                                     passeCount: block.passCount,
-                                    zeroBitPlanes: block.zeroBitPlanes
+                                    zeroBitPlanes: block.zeroBitPlanes,
+                                    passSegmentLengths: block.segmentLengths
                                 )
                                 if collector != nil {
                                     let decoded = try blockDecoder.decodeWithIntegrity(
@@ -3870,7 +4116,7 @@ struct DecoderPipeline: Sendable {
             }
         } else {
             // Sequential path for small block counts
-            let decodeOptions: CodingOptions = metadata.configuration.useSelectiveArithmeticBypass ? .fastEncoding : .default
+            let decodeOptions = Self.decodeCodingOptions(for: metadata.configuration)
             for (blockIdx, block) in blocks.enumerated() {
                 let compInfo = metadata.components[block.componentIndex]
                 let bitDepth = block.bandKb > 0 ? block.bandKb : compInfo.bitDepth
@@ -3922,7 +4168,8 @@ struct DecoderPipeline: Sendable {
                         subband: block.subband,
                         data: block.data,
                         passeCount: block.passCount,
-                        zeroBitPlanes: block.zeroBitPlanes
+                        zeroBitPlanes: block.zeroBitPlanes,
+                        passSegmentLengths: block.segmentLengths
                     )
                     if let collector = integrityCollector {
                         let decoded = try decoder.decodeWithIntegrity(
