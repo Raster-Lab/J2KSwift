@@ -253,18 +253,9 @@ If you're committing on a `feature/...` or `fix/...` branch the gate is **strong
 
 `release.yml` previously had a `Validate Release` job that built the package on `macos-15`. It was removed in v6.0.1 because the workflow could not resolve a sibling-path dependency on `../CompressionFamily`.
 
-**That reason is obsolete.** `Package.swift` resolves CompressionFamily from its public URL `https://github.com/Raster-Lab/CompressionFamily.git` (from 1.0.0, currently 1.0.1) — the sibling-path probe was removed in Raster-Lab/J2KSwift#438 precisely so the package stays URL-consumable. `swift package resolve` succeeds from a clean checkout with no sibling present, verified 2026-09-22. Build verification now lives in `ci.yml` rather than in `release.yml`; the mandatory local commit gate is unchanged and remains stricter.
+**That reason is obsolete twice over.** Raster-Lab/J2KSwift#438 replaced the sibling-path probe with the public URL, and on 2026-09-22 the CompressionFamily dependency left the root package altogether: the conformances live in the separate package under [`Adapters/J2KCompressionFamily`](Adapters/J2KCompressionFamily/) (suite contract 0.8.0 §4), and `Package.swift` declares no external dependency, so `swift package resolve` has nothing to fetch. Build verification lives in `ci.yml` rather than in `release.yml`; the mandatory local commit gate is unchanged and remains stricter.
 
-If `CompressionFamily` is ever pushed to a private GitHub repo, restore the Validate job and add a sibling-checkout step:
-
-```yaml
-- name: Checkout CompressionFamily sibling
-  uses: actions/checkout@v4
-  with:
-    repository: Raster-Lab/CompressionFamily
-    path: ../CompressionFamily
-    ssh-key: ${{ secrets.COMPRESSION_FAMILY_DEPLOY_KEY }}
-```
+The adapter package is not part of the root build. Its own gate is `cd Adapters/J2KCompressionFamily && swift build && swift test`, and a change to `J2KImage`, `J2KError`, `J2KEncoder` or `J2KDecoder` that alters their public shape must keep it green.
 
 ---
 

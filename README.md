@@ -223,6 +223,8 @@ Then add the specific modules you need to your target dependencies:
 )
 ```
 
+J2KSwift declares **no external package dependency**: a consumer pulls this one repository and nothing transitive. The `CompressionFamily` protocol conformances for `J2KImage`, `J2KError`, `J2KEncoder` and `J2KDecoder` live in the separate package [`Adapters/J2KCompressionFamily`](Adapters/J2KCompressionFamily/); add it and `import J2KCompressionFamily` only if you write codec-agnostic code against those protocols.
+
 ### Basic Usage
 
 #### Simple Encoding (v1.2.0)

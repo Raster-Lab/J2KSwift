@@ -1,12 +1,17 @@
-// Pin-down: J2KSwift's public types conform to the
-// `CompressionFamily` protocol surface shared with JXLSwift.
+// Pin-down: J2KSwift's public types conform to the `CompressionFamily`
+// protocol surface once this adapter module is imported.
+//
+// Moved from `Tests/J2KCodecTests/CompressionFamilyConformanceTests.swift`
+// with the conformances (suite contract 0.8.0 §4). Only public API is used, so
+// `@testable` is not needed.
 
 import XCTest
 import CompressionFamily
-@testable import J2KCore
-@testable import J2KCodec
+import J2KCore
+import J2KCodec
+import J2KCompressionFamily
 
-final class CompressionFamilyConformanceTests: XCTestCase {
+final class ConformanceTests: XCTestCase {
 
     /// `J2KImage` carries `width: Int, height: Int` matching
     /// the `CompressionImage` protocol.

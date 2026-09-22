@@ -83,10 +83,11 @@ jobs:
       - name: Toolchain
         run: swift --version
 
-      # Package.swift resolves CompressionFamily from its public URL
-      # (https://github.com/Raster-Lab/CompressionFamily.git, from 1.0.0).
-      # A separate resolve step makes a dependency failure legible instead of
-      # surfacing as a confusing build error.
+      # Package.swift declares no external dependency since the
+      # CompressionFamily conformances moved to Adapters/J2KCompressionFamily
+      # (suite contract 0.8.0 §4). The resolve step is kept so that a
+      # dependency ever reintroduced fails legibly here rather than as a
+      # confusing build error.
       - name: Resolve dependencies
         run: swift package resolve
 
