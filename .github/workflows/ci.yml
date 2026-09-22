@@ -1,0 +1,273 @@
+name: CI
+
+# J2KSwift build and test gate.
+#
+# Contract 0.8.0 (Decision D2) makes executing continuous integration a
+# precondition for relocating this codec into SwiftJ2K, and POL-08 is explicit
+# that a gate which cannot run is an unexecuted gate, not a pass. No job here
+# uses `continue-on-error`.
+#
+# COST IS THE BINDING CONSTRAINT, and this file is shaped around it. The
+# previous workflows were deleted on 2026-05-27 because 5 releases in one day
+# triggered ~14 macos-15 runs at a 75-minute cap — roughly $420 of billing for
+# the day (see README.md in this directory). That decision was correct and is
+# not being reversed. The rules that keep it correct:
+#
+#   1. Linux runners bill at 1x, macOS at 10x. Everything that can run on Linux
+#      runs on Linux.
+#   2. On a pull request, macOS builds but does not test. A compile break is
+#      what an Apple-only job realistically catches; the correctness signal
+#      comes from Linux at a tenth of the price.
+#   3. The full suite is NOT in cloud CI. It measured 4,948 executed tests in
+#      3h38m for v11.1.0-rc.1; on macOS that is ~2,200 billable minutes per
+#      run. It stays a local gate, as RELEASING.md already requires.
+#   4. There is no `schedule:` trigger. Nothing here starts unattended.
+#      The expensive tiers are `workflow_dispatch` only.
+#
+# The mandatory pre-commit and pre-release performance gate in RELEASING.md
+# deliberately does NOT run here. PERF-02 makes controlled hardware the release
+# gate and CI wall-clock on a shared runner advisory only, so running it here
+# would produce a number that is not allowed to gate anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 'Which tier to run'
+        required: true
+        default: 'codec'
+        type: choice
+        options:
+          - codec        # Linux + the large J2KCodecTests target
+          - apple-tests  # macOS test matrix (expensive - 10x billing)
+          - metal        # macOS Metal target only (needs a GPU runner)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Matches release.yml: run JavaScript actions under Node 24 following GitHub's
+# deprecation of Node 20 on runners.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Tier 1 - Linux. Runs on every pull request and every push to main.
+  #
+  # This is the workflow's real correctness gate. It is also the first
+  # automated Linux evidence this package has ever had: Metal, Accelerate,
+  # VideoToolbox and CoreVideo are all behind `canImport` guards in Sources,
+  # but that has never been compiled for a non-Apple target. If this job fails
+  # on its first run, that is the job working.
+  # ---------------------------------------------------------------------------
+  linux-build:
+    name: Linux build (Swift 6.2)
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # The repository is ~145 MB, most of it Tests/Fixtures. No job here
+          # needs history.
+          fetch-depth: 1
+
+      - name: Toolchain
+        run: swift --version
+
+      # Package.swift resolves CompressionFamily from its public URL
+      # (https://github.com/Raster-Lab/CompressionFamily.git, from 1.0.0).
+      # A separate resolve step makes a dependency failure legible instead of
+      # surfacing as a confusing build error.
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Build (release)
+        run: swift build -c release
+
+  linux-tests:
+    name: Linux tests (bounded set)
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    needs: linux-build
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      # Deliberately excluded here and covered elsewhere:
+      #   J2KCodecTests          - 206 files, the bulk of the 3h38m suite;
+      #                            runs in the `codec-tests` tier below
+      #   J2KMetalTests          - requires Metal, so Apple-only
+      #   J2KDaemonTests         - XPC, so macOS-only
+      #   J2KDaemonClientTests   - XPC, so macOS-only
+      #
+      # Do NOT add `--scratch-path` to these commands. J2KCLITests resolves the
+      # built CLI at the hardcoded path `.build/debug/j2k`, and a non-default
+      # scratch path is what produced the 8 spurious failures recorded in the
+      # v11.1.0-rc.1 release notes.
+      # `--filter` matches a regex against test IDs, which begin with the test
+      # target's module name. A typo, or a target that is renamed or removed,
+      # would silently select nothing and report a green job. This asserts the
+      # filter is load-bearing before the run, so a vacuous pass is impossible.
+      - name: Test (debug)
+        env:
+          FILTER: 'J2KCoreTests|J2KContractTests|J2KFileFormatTests|JPIPTests|JP3DTests|J2KDICOMHelpersTests|J2KComplianceTests'
+        run: |
+          set -euo pipefail
+          count=$(swift test list --filter "$FILTER" | wc -l)
+          echo "filter selects $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::The test filter selected no tests. A green result here would be vacuous."
+            exit 1
+          fi
+          swift test --filter "$FILTER"
+
+  # ---------------------------------------------------------------------------
+  # Tier 2 - Apple compile check. Pull requests and main. Build only.
+  #
+  # macOS bills at 10x, so this job does not run tests. It exists to catch the
+  # Apple-specific compile breaks that Linux structurally cannot see: the
+  # `canImport(Metal)`, `canImport(Accelerate)` and `canImport(VideoToolbox)`
+  # branches, and the 34 `#if os(macOS)` regions.
+  # ---------------------------------------------------------------------------
+  apple-build:
+    name: macOS build (no tests)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Build (release)
+        run: swift build -c release
+
+  # ---------------------------------------------------------------------------
+  # Tier 3 - the large codec test target. Push to main, or manual dispatch.
+  #
+  # Linux, so 1x billing, but it is the long pole of the suite and does not
+  # belong on every pull-request push.
+  # ---------------------------------------------------------------------------
+  codec-tests:
+    name: Linux J2KCodecTests
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    if: github.event_name == 'push' || github.event.inputs.scope == 'codec'
+    needs: linux-build
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Test J2KCodecTests (release)
+        run: |
+          set -euo pipefail
+          count=$(swift test list -c release --filter 'J2KCodecTests' | wc -l)
+          echo "filter selects $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::The test filter selected no tests. A green result here would be vacuous."
+            exit 1
+          fi
+          swift test -c release --filter 'J2KCodecTests'
+
+  # ---------------------------------------------------------------------------
+  # Tier 4 - macOS test matrix. MANUAL DISPATCH ONLY.
+  #
+  # At 10x billing this is the expensive tier, and nothing triggers it
+  # automatically. Sharding by target parallelises wall-clock but does not
+  # reduce billable minutes; it exists so an individual target can be
+  # dispatched without dragging the whole suite along.
+  # ---------------------------------------------------------------------------
+  apple-tests:
+    name: macOS ${{ matrix.target }}
+    runs-on: macos-15
+    if: github.event.inputs.scope == 'apple-tests'
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - J2KCoreTests
+          - J2KFileFormatTests
+          - JPIPTests
+          - JP3DTests
+          - J2KDICOMHelpersTests
+          - J2KComplianceTests
+          - J2KCLITests
+          - J2KDaemonTests
+          - J2KDaemonClientTests
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Test ${{ matrix.target }} (release)
+        env:
+          FILTER: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          count=$(swift test list -c release --filter "$FILTER" | wc -l)
+          echo "filter selects $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::The test filter selected no tests. A green result here would be vacuous."
+            exit 1
+          fi
+          swift test -c release --filter "$FILTER"
+
+  # ---------------------------------------------------------------------------
+  # Tier 5 - Metal. MANUAL DISPATCH ONLY.
+  #
+  # Kept separate from the matrix above because it is the one target whose
+  # result depends on the runner's GPU rather than only on the code. A Metal
+  # failure here needs reading before it is treated as a regression - see the
+  # flaky session-comparison test fixed in #487, which was gated on a speed-up
+  # rather than on parity.
+  # ---------------------------------------------------------------------------
+  metal-tests:
+    name: macOS J2KMetalTests
+    runs-on: macos-15
+    if: github.event.inputs.scope == 'metal'
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Test J2KMetalTests (release)
+        run: |
+          set -euo pipefail
+          count=$(swift test list -c release --filter 'J2KMetalTests' | wc -l)
+          echo "filter selects $count tests"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::The test filter selected no tests. A green result here would be vacuous."
+            exit 1
+          fi
+          swift test -c release --filter 'J2KMetalTests'

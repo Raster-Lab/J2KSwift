@@ -251,7 +251,9 @@ If you're committing on a `feature/...` or `fix/...` branch the gate is **strong
 | [`conformance.yml`](.github/workflows/conformance.yml) | every PR | HTJ2K Part-15 conformance | Yes for codec-touching PRs |
 | [`performance.yml`](.github/workflows/performance.yml) | every PR | Perf benchmark with regression budget | Advisory — review numbers, doesn't auto-block |
 
-`release.yml` previously had a `Validate Release` job that built the package on `macos-15`. It was removed in v6.0.1 because the workflow can't resolve the sibling-path dep `../CompressionFamily` — that dep isn't on a remote, so CI can never resolve it. The mandatory commit gate (run locally before tagging) is stricter than `swift build -c release` and serves the same purpose.
+`release.yml` previously had a `Validate Release` job that built the package on `macos-15`. It was removed in v6.0.1 because the workflow could not resolve a sibling-path dependency on `../CompressionFamily`.
+
+**That reason is obsolete.** `Package.swift` resolves CompressionFamily from its public URL `https://github.com/Raster-Lab/CompressionFamily.git` (from 1.0.0, currently 1.0.1) — the sibling-path probe was removed in Raster-Lab/J2KSwift#438 precisely so the package stays URL-consumable. `swift package resolve` succeeds from a clean checkout with no sibling present, verified 2026-09-22. Build verification now lives in `ci.yml` rather than in `release.yml`; the mandatory local commit gate is unchanged and remains stricter.
 
 If `CompressionFamily` is ever pushed to a private GitHub repo, restore the Validate job and add a sibling-checkout step:
 
