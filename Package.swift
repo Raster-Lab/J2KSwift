@@ -3,24 +3,11 @@
 
 import PackageDescription
 
-// CompressionFamily — shared protocol surface for the Swift
-// compression-library family. Always resolved from its public Git
-// repository so J2KSwift stays URL-consumable as a SwiftPM dependency
-// (see #438).
-//
-// The previous `FileManager.fileExists("../CompressionFamily")` probe was
-// relative to the *current working directory*. SwiftPM evaluates a
-// dependency's manifest with CWD set to the consuming root package, so any
-// consumer that happened to have a `CompressionFamily` directory beside its
-// own package root caused J2KSwift to fall back to a `.package(path:)`
-// dependency — which a stable-versioned consumer is not allowed to depend
-// on transitively ("unstable-version package"). Always using the URL form
-// removes that footgun. For local co-development of J2KSwift +
-// CompressionFamily, use `swift package edit CompressionFamily
-// --path ../CompressionFamily`.
-let compressionFamilyDependency: Package.Dependency = .package(
-    url: "https://github.com/Raster-Lab/CompressionFamily.git",
-    from: "1.0.0")
+// J2KSwift has no external package dependency. The CompressionFamily
+// protocol conformances that used to live in J2KCore and J2KCodec moved to
+// the separate package under Adapters/J2KCompressionFamily on 2026-09-22
+// (suite contract 0.8.0 §4), so the core library resolves alone and stays
+// URL-consumable with nothing transitive.
 
 let package = Package(
     name: "J2KSwift",
@@ -92,17 +79,12 @@ let package = Package(
             name: "J2KDaemonClient",
             targets: ["J2KDaemonClient"]),
     ],
-    dependencies: [
-        compressionFamilyDependency,
-    ],
+    dependencies: [],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "J2KCore",
-            dependencies: [
-                .product(name: "CompressionFamily", package: "CompressionFamily"),
-            ]),
+            name: "J2KCore"),
         // v9.4-research — custom C+NEON tier-1 HT block encoder. Plain C
         // target with caller-owned-buffer entry point. No global statics,
         // no allocator hits. Default-off behind J2K_NEON_HOT_PATH env var
@@ -124,7 +106,6 @@ let package = Package(
                 "J2KCore",
                 "J2KMetal",
                 "J2KCodecNEON",
-                .product(name: "CompressionFamily", package: "CompressionFamily"),
             ]),
         .target(
             name: "J2KContract",
@@ -195,7 +176,6 @@ let package = Package(
             dependencies: [
                 "J2KCodec", "J2KFileFormat", "J2KMetal",
                 "J2KCodecNEON",
-                .product(name: "CompressionFamily", package: "CompressionFamily"),
             ]),
         .testTarget(
             name: "J2KFileFormatTests",

@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`CompressionFamily` is no longer a dependency of the J2KSwift package.**
+  The conformances of `J2KImage`, `J2KError`, `J2KEncoder` and `J2KDecoder` to
+  the `CompressionFamily` protocols moved out of `J2KCore` and `J2KCodec` into
+  a separate package, [`Adapters/J2KCompressionFamily`](Adapters/J2KCompressionFamily/),
+  together with their pin-down tests. Suite contract 0.8.0 §4 requires the core
+  library to resolve alone before the codec migrates into SwiftJ2K (POL-01,
+  POL-02); CompressionFamily itself is untouched and stays available to
+  predecessor consumers under POL-04. Every library product now has zero
+  external package dependencies. A consumer that relied on the inherited
+  conformances adds the adapter package and `import J2KCompressionFamily`; the
+  conformances are retroactive, so the import is required. No in-house
+  consumer imported them. No codec change; codestream bytes are unaffected.
+
 ## [12.0.0-rc.1] — 2026-09-21 (release candidate)
 
 Three defects that all shared one failure mode: the decoder returned a

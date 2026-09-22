@@ -29,10 +29,10 @@ jobs:
   # v6.0.1 because Package.swift then declared a sibling-path dependency on
   # `../CompressionFamily`, which no runner could resolve.
   #
-  # That reason is obsolete. Package.swift resolves CompressionFamily from
-  # its public URL (Raster-Lab/J2KSwift#438 removed the sibling-path probe so
-  # the package stays URL-consumable), and `swift package resolve` succeeds
-  # from a clean checkout. Build verification now lives in ci.yml, which
+  # That reason is obsolete. Package.swift declares no external dependency
+  # at all: the CompressionFamily conformances moved to the separate package
+  # under Adapters/J2KCompressionFamily (suite contract 0.8.0 §4), so
+  # `swift package resolve` has nothing to fetch. Build verification now lives in ci.yml, which
   # builds debug and release on both Linux and macOS, so this workflow
   # deliberately stays a release-publishing workflow only. The mandatory
   # local commit gate in RELEASING.md is unchanged and remains stricter.
